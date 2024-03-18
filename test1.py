@@ -15,6 +15,10 @@ import zipfile
 
 from _snowflake import vectorized
 
+#Load the model while init
+import id_matcher 
+nlp = spacy.load(extracted + '/en_core_web_sm_id_no_sent')
+
 logger = logging.getLogger('my_logger')
 
 File lock class for synchronizing write access to /tmp.
@@ -46,8 +50,8 @@ with FileLock():
 #Load the model from the extracted file.
 #nlp = spacy.load(extracted + '/model-best') 
 sys.path.insert(1, extracted + '/en_core_web_sm_id_no_sent') 
-import id_matcher 
-nlp = spacy.load(extracted + '/en_core_web_sm_id_no_sent')
+#import id_matcher 
+#nlp = spacy.load(extracted + '/en_core_web_sm_id_no_sent')
 
 #@vectorized(input=pd.DataFrame) 
 #def process_tmp(df): 
