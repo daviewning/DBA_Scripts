@@ -36,3 +36,12 @@ By following these steps, you can effectively save your NLP study into Snowflake
 
 
 https://stackoverflow.com/questions/70793413/how-to-clear-last-run-query-cache-in-snowflake
+
+SELECT TO_DATE(start_time) AS date,
+ warehouse_name,
+ SUM(avg_running) AS sum_running,
+ SUM(avg_queued_load) AS sum_queued
+FROM snowflake.account_usage.warehouse_load_history
+WHERE TO_DATE(start_time) >= DATEADD(month,-1,CURRENT_TIMESTAMP())
+GROUP BY 1,2
+HAVING SUM(avg_queued_load) >0;
