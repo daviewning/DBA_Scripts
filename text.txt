@@ -45,3 +45,9 @@ FROM snowflake.account_usage.warehouse_load_history
 WHERE TO_DATE(start_time) >= DATEADD(month,-1,CURRENT_TIMESTAMP())
 GROUP BY 1,2
 HAVING SUM(avg_queued_load) >0;
+
+
+SELECT *
+FROM "SNOWFLAKE"."ACCOUNT_USAGE"."QUERY_HISTORY"
+WHERE START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+AND START_TIME < CURRENT_TIMESTAMP();
