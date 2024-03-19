@@ -51,3 +51,7 @@ SELECT *
 FROM "SNOWFLAKE"."ACCOUNT_USAGE"."QUERY_HISTORY"
 WHERE START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
 AND START_TIME < CURRENT_TIMESTAMP();
+
+https://select.dev/posts/snowflake-warehouse-sizing#1-processing-power
+https://docs.snowflake.com/en/user-guide/warehouses-overview
+
