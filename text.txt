@@ -33,3 +33,6 @@ Use stored procedures to push Python code into Snowflake for processing, which i
 Cache the training dataset using df.cache_result() to minimize I/O operations.
 Cache model files when loading them in UDF functions to speed up predictions 1.
 By following these steps, you can effectively save your NLP study into Snowflake, process it using Snowpark for Python, and develop applications with Streamlit. This approach allows you to leverage Snowflake's scalability and security while maintaining the flexibility and power of Python for NLP and ML tasks.
+
+
+https://stackoverflow.com/questions/70793413/how-to-clear-last-run-query-cache-in-snowflake
