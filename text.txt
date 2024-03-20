@@ -78,3 +78,5 @@ FROM "SNOWFLAKE"."ACCOUNT_USAGE"."QUERY_HISTORY"
 WHERE BYTES_SPILLED_TO_REMOTE_STORAGE > BYTES_SCANNED * 5  -- Each byte read was spilled 5x on average
 ORDER BY SPILLING_READ_RATIO DESC
 ;
+
+https://quickstarts.snowflake.com/guide/resource_optimization_performance_optimization/index.html?index=..%2F..index#4
