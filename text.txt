@@ -172,3 +172,12 @@ INSERT INTO NOTEPAD_F (
 How do I avoid running the function more than once?
 
 And keeping a single column?
+
+
+To avoid running the py_spacy_id function more than once on your NOTEPAD_F table in Snowflake, you can use a conditional update approach. This method checks if the NLP_ICF_DIFFICULTY column is already populated before applying the function. Here's how you can modify your script:
+
+UPDATE NOTEPAD_F
+SET NLP_ICF_DIFFICULTY = py_spacy_id(NOTEPAD_TXT)
+WHERE NLP_ICF_DIFFICULTY IS NULL;
+
+This script updates the NLP_ICF_DIFFICULTY column only for rows where NLP_ICF_DIFFICULTY is NULL, ensuring that the py_spacy_id function is not called unnecessarily on rows that already have a value in the NLP_ICF_DIFFICULTY column. This approach is efficient and avoids reprocessing data that has already been processed, thus saving computational resources and time.
