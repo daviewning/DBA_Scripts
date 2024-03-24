@@ -103,3 +103,61 @@ Azure Service Fabric: A platform for distributed systems that can run in many en
 Azure Kubernetes Fleet Manager: Helps manage Kubernetes clusters at scale, providing seamless management capabilities 2.
 Azure Kubernetes Service Edge Essentials: An on-premises Kubernetes implementation of Azure Kubernetes Service (AKS) for automating the running of containerized applications at scale 2.
 These services cater to a wide range of containerization needs, from simple container hosting to complex orchestration and management, offering various levels of control, customization, and management capabilities.
+
+
+The resource needs for Azure's container services, particularly focusing on Azure Container Instances (ACI), are outlined below based on the provided sources. These details are crucial for planning and managing deployments within Azure's ecosystem.
+
+General Resource Limits for ACI
+Max CPU: 4 cores
+Max Memory (GB): 16 GB
+Storage (GB): 50 GB
+Availability Zone support: Yes
+These limits apply to general purpose (standard core SKU) containers in general deployments and Azure virtual network deployments for both Linux and Windows containers 1.
+
+Specific Resource Limits for Different Scenarios
+Linux Container Groups:
+Max CPU: 4 cores
+Max Memory: 16 GB
+VNET Max CPU: 4 cores
+VNET Max Memory: 16 GB
+Storage: 50 GB
+Windows Server 2019 LTSC:
+Max CPU: 4 cores
+Max Memory: 16 GB
+Storage: 20 GB
+Availability Zone support: Yes
+Windows Server 2022 LTSC:
+Max CPU: 4 cores
+Max Memory: 16 GB
+Storage: 20 GB
+Availability Zone support: Yes
+Confidential Container Resources (Preview):
+Max CPU: 4 cores
+Max Memory: 16 GB
+VNET Max CPU: 4 cores
+VNET Max Memory: 16 GB
+Storage: 50 GB
+GPU Container Resources (Preview):
+V100 GPU SKUs:
+1 GPU: Max CPU 6 cores, Max Memory 112 GB, Storage 50 GB
+2 GPUs: Max CPU 12 cores, Max Memory 224 GB, Storage 50 GB
+4 GPUs: Max CPU 24 cores, Max Memory 448 GB, Storage 50 GB
+Spot Container Resources (Preview):
+Max CPU: 4 cores
+Max Memory: 16 GB
+Storage: 50 GB
+Unchangeable (Hard) Limits
+Number of containers per container group: 60
+Number of volumes per container group: 20
+Ports per IP: 5
+Container instance log size - running instance: 4 MB
+Container instance log size - stopped instance: 16 KB or 1,000 lines
+Changeable Limits (Eligible for Quota Increases)
+Standard SKU container groups per region per subscription: 100
+Standard SKU cores (CPUs) per region per subscription: 100
+Standard SKU cores (CPUs) for V100 GPU per region per subscription: 0
+Container group creates per hour: 300
+Container group creates per 5 minutes: 100
+Container group deletes per hour: 300
+Container group deletes per 5 minutes: 100
+These limits are subject to change and can be increased by submitting an Azure support request. However, not all limit increase requests are guaranteed to be approved 1.
