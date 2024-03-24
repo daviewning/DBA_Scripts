@@ -80,3 +80,26 @@ ORDER BY SPILLING_READ_RATIO DESC
 ;
 
 https://quickstarts.snowflake.com/guide/resource_optimization_performance_optimization/index.html?index=..%2F..index#4
+
+
+Azure Machine Learning: This is a central service that supports the entire machine learning lifecycle, from experimentation to deployment. It integrates with MLflow, an open-source platform for managing the machine learning lifecycle, allowing for tracking experiments, packaging code, managing models, serving and deploying models, and registering models. Azure Machine Learning also offers functionalities for managing and versioning models, supporting various machine learning frameworks, and integrating model serving and deployment capabilities 2.
+Infrastructure and Resources: Azure provides recommendations for managing shared analytics and storage infrastructure, including cloud file systems for storing datasets, databases, and big data clusters (e.g., SQL or Spark). This infrastructure supports reproducible analysis and prevents duplication, leading to cost savings and consistency. It also includes tools for provisioning shared resources, tracking them, and allowing secure connections for team members 2.
+Team Data Science Process (TDSP): This is an agile, iterative methodology for delivering predictive analytics solutions and AI applications efficiently. TDSP includes best practices and structures from Microsoft and other industry leaders to help teams implement data science initiatives successfully. It outlines a lifecycle for structuring data science projects, consisting of five major stages that teams perform iteratively 2.
+Tools and Utilities: Azure offers tools to implement the TDSP and lifecycle, aiming to lower the barriers to adoption and increase consistency. It supports the use of open-source tooling as part of the data science pipeline or workflow and promotes responsible AI tools to achieve Microsoft's Responsible AI Standard 2.
+Standardized Project Structure: Azure supports a standardized project structure that includes documentation, project reports, data reports, model reports, and code for data preparation, model development, and operationalization. This structure facilitates efficient project management and collaboration 2.
+These services and tools collectively provide a robust framework for data scientists and teams to conduct data science projects, manage models, and deploy solutions on Azure.
+
+Azure offers a variety of container services to cater to different needs, from simple container hosting to complex orchestration and management. Here's a comprehensive list of Azure's container services:
+
+Azure Container Apps: Designed for building and deploying modern apps and microservices using serverless containers, offering a fully managed Kubernetes-based application platform 12.
+Azure Container Storage: Provides management of persistent volumes for stateful container applications 1.
+Azure Kubernetes Service (AKS): A managed Kubernetes service for deploying and scaling containerized applications, offering advanced and highly customizable orchestration functionality 125.
+Azure Container Registry: A service for building, storing, securing, and replicating container images and artifacts 12.
+Azure Container Instances: Allows launching containers with hypervisor isolation, suitable for running containers in Azure without managing virtual machines 125.
+Azure Red Hat OpenShift: Offers managed Red Hat OpenShift for deploying and scaling containers, providing additional security and observability features 2.
+Azure Functions: A serverless compute service that lets you run event-driven code without having to explicitly provision or manage infrastructure 2.
+Web App for Containers: A feature of Azure App Service for running containerized web apps on Windows and Linux, offering built-in infrastructure maintenance, security patching, scaling, and diagnostic tooling 24.
+Azure Service Fabric: A platform for distributed systems that can run in many environments, including Azure or on-premises, offering a custom orchestration platform 25.
+Azure Kubernetes Fleet Manager: Helps manage Kubernetes clusters at scale, providing seamless management capabilities 2.
+Azure Kubernetes Service Edge Essentials: An on-premises Kubernetes implementation of Azure Kubernetes Service (AKS) for automating the running of containerized applications at scale 2.
+These services cater to a wide range of containerization needs, from simple container hosting to complex orchestration and management, offering various levels of control, customization, and management capabilities.
