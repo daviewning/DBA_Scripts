@@ -161,3 +161,14 @@ Container group creates per 5 minutes: 100
 Container group deletes per hour: 300
 Container group deletes per 5 minutes: 100
 These limits are subject to change and can be increased by submitting an Azure support request. However, not all limit increase requests are guaranteed to be approved 1.
+
+
+ALTER TABLE NOTEPAD_F ADD COLUMN NLP_ICF_DIFFICULTY VARCHAR;
+ALTER TABLE NOTEPAD_F ALTER COLUMN NLP_ICF_DIFFICULTY DROP NOT NULL;
+INSERT INTO NOTEPAD_F (
+    NLP_ICF_DIFFICULTY
+) SELECT py_spacy_id(NOTEPAD_TXT) AS NLP_ICF_DIFFICULTY FROM NOTEPAD_F
+
+How do I avoid running the function more than once?
+
+And keeping a single column?
