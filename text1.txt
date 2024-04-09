@@ -1,0 +1,1972 @@
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# Library functions
+# 2023       KM Various hacks prior to testing with the Waikato team
+# 2023-12-07 KM Added small correction to distance term in cost function
+# 2023-12-21 KM Re-introduced Zone preferences option from app_v02
+# 2024-01-17 KM Added extract functions to simplify top-level scripts
+# 2024-01-23 KM Added counts of MSD Waitlist
+# 2024-02-09 KM More cleaning functions
+# 2024-02-14 KM Added LARs (letting areas) to bit-list extract
+# 2024-02-16 KM Changed subset functions to use vector of zones rather than scalar
+# 2024-02-27 KM Added pipeline extract. Refactored lookups into functions
+# 2024-02-29 KM Added map function. Moved dummy data to Dunedin.
+# 2024-03-01 KM Tuning h/p risk scores and weights
+# 2024-03-01 KM Fix in logic for preferred zones
+# 2024-03-07 KM Simpler logic for property priority
+# 2024-03-09 KM Days waiting for households
+# 2024-03-14 KM Added alert_code
+# 2024-03-14 KM Standardising preferred zone logic
+# 2024-03-21 KM Added palert for dodgy data eg from HDS.
+# 2024-03-22 KM Added fns to load/delete pbi slices
+# 2024-03-27 KM Added ptype and reformatted paddress/haddress for sorting/grouping
+# 2024-04-05 KM Bugfix in processing offers
+# 2024-04-08 KM Removing unused functions. all functions now return value
+################################################################################
+################################################################################
+####### Functions for extraction ###############################################
+################################################################################
+################################################################################
+
+################################################################################
+# Strips commas and unnecessary spaces form text fields
+#
+my.strip.fn <- function(x){
+  yy <- str_trim(gsub("\\s+"," ",gsub('"','',gsub(","," ",x))))
+  return (yy)
+}
+################################################################################
+# Puts lookups into global variables
+#
+my.lookups.load.fn <- function(conn){
+	
+	lookup.cs2z  <<- my.lookup.cs2z.fn(conn)
+	lookup.pc2z  <<- my.lookup.pc2z.fn(conn)
+	lookup.pc2ll <<- my.lookup.pc2ll.fn(conn)
+	lookup.lc2z  <<- my.lookup.lc2z.fn(conn)
+	
+	return(0)
+}
+################################################################################
+# Returns a lookup city/suburb to zone for imputation
+#
+# Some city/suburb combinations map to different
+# zones and in this case pick the one that occurs the most. Eg City=AUCKLAND 
+# suburb=AVONDALE maps to zone New LYNN/NORTH SHORE  and zone Emergency Housing
+# so pick the first of these as there is only 1 of the latter
+my.lookup.cs2z.fn <- function(conn){
+	
+	query <- read_file("./sql/pl_app_01_query_lookup_city_suburb_to_zone.sql")
+	lookup.cs2z <- dbGetQuery(conn,query)  %>% 
+		               janitor::clean_names() %>% 
+		               arrange(city,suburb,desc(n)) %>% 
+		               group_by(city,suburb) %>% 
+		               filter(row_number()==1) %>% 
+		               ungroup() %>% 
+		               arrange(city,suburb) %>% 
+		               select(-n)
+
+	return(lookup.cs2z)
+}
+################################################################################
+# Returns a lookup postcode to zone for imputation
+# Pick the most common zone for a given postcode
+#
+my.lookup.pc2z.fn <- function(conn) {
+	
+	query <- read_file("./sql/pl_app_01_query_lookup_postcode_to_zone.sql")
+	lookup.pc2z <- dbGetQuery(conn,query)  %>% 
+		          janitor::clean_names() %>% 
+		          arrange(postcode,desc(n)) %>% 
+		          group_by(postcode) %>% 
+		          filter(row_number()==1) %>% 
+		          ungroup() %>% 
+		          select(-n)
+	
+	return(lookup.pc2z)
+}
+################################################################################
+# Returns a lookup postcode to lat/lon for imputation
+# Reject any with just 1 entry
+#
+my.lookup.pc2ll.fn <- function(conn) {
+	
+	query <- read_file("./sql/pl_app_01_query_lookup_postcode_to_latlon.sql")
+	lookup.pc2ll <- dbGetQuery(conn,query)  %>% 
+		          janitor::clean_names() %>% 
+		          filter(n>1) %>% 
+		          select(-n) 
+	
+	return(lookup.pc2ll)
+}
+################################################################################
+# Returns a lookup lar-code to zone for imputation
+# Pick the most common zone for a given code
+#
+my.lookup.lc2z.fn <- function(conn) {
+	
+	query <- read_file("./sql/pl_app_01_query_lookup_larcode_to_zone.sql")
+	lookup.lc2z <- dbGetQuery(conn,query)  %>% 
+		          janitor::clean_names() %>% 
+		          arrange(lar_code,desc(n)) %>% 
+		          group_by(lar_code) %>% 
+		          filter(row_number()==1) %>% 
+		          ungroup() %>% 
+		          select(-n)
+
+	return(lookup.lc2z)
+}
+################################################################################
+# Extracts and pre-processes void properties
+#
+my.extract.properties.void.fn <- function(conn){
+	
+	# Voids available to let. Strip commas from addresses
+	query <- read_file("./sql/pl_app_01_query_properties_void.sql")
+	pvd <- dbGetQuery(conn,query)  %>% janitor::clean_names()
+	pvd$property_name     <- my.strip.fn(pvd$property_name)
+	pvd$formatted_address <- my.strip.fn(pvd$formatted_address)
+	pvd$placement_address <- my.strip.fn(pvd$placement_address)
+
+	# Some (mostly new builds or redevs where data entry is sketchy) need to
+	# have missing zones filled in. No missing lats and lons
+	pvd <- pvd %>% left_join(lookup.cs2z,by=c("property_city"="city",
+		                                      "property_suburb"="suburb")) %>% 
+		             mutate(zone_lookup = ifelse(is.na(zone_lookup),'Missing',zone_lookup)) %>% 
+		             mutate(zone.imputed = ifelse(curr_manager_hws_desc=='Missing','Y','N'),
+		             	      zone = ifelse(zone.imputed=='Y',zone_lookup,curr_manager_hws_desc),
+		             	      latlon.imputed = 'N')
+	
+	# DMOD counts and merge in
+	query <- read_file("./sql/pl_app_01_query_dmodsp.sql")
+	tmp <- dbGetQuery(conn,query)  %>% janitor::clean_names()  
+	pvd <- pvd %>% left_join(tmp,by=c("lettable_unit_code"="property_ref"))
+	
+	
+	# Finally a variable to help us keep only those within property window
+	pvd <- pvd %>% mutate(days_void = as.integer(date(ymd(extrdt))) - 
+			                              as.integer(date(ymd(void_date))),
+		                    days2delivery = -days_void) 
+	
+	rm(tmp)	
+	
+	return(pvd)	
+}
+################################################################################
+# Extracts pipeline properties. 
+# Each row is a build_project_phase and because each of these may deliver
+# 1 or more dwellings, we have to expand to one row per dwelling.
+# 
+
+my.extract.properties.pipeline.fn <- function(conn){
+	
+	# Read full pipeline 
+	query <- read_file("./sql/pl_app_01_query_properties_pipeline.sql")
+	ppl <- dbGetQuery(conn,query)  %>% 
+		            janitor::clean_names() %>% 
+		             select(-redev_bedrm_tot_cnt)
+	
+	ppl$placement_address <- my.strip.fn(ppl$placement_address)
+	
+	# Impute a zone from city/suburb. Nothing to replace
+	ppl <- ppl %>% left_join(lookup.cs2z,by=c("city_name"="city",
+		                                        "suburb_name"="suburb")) %>% 
+		             mutate(zone = ifelse(is.na(zone_lookup),'Missing',zone_lookup),
+		             	      zone.imputed = 'Y') 
+	
+	# Impute lats & longs from postcode
+	ppl <- ppl %>% left_join(lookup.pc2ll,by=c("postal_code"="postcode")) %>% 
+		             mutate(lat 						= ifelse(is.na(lat_lookup),NaN,lat_lookup),
+		             	      lon 						= ifelse(is.na(lon_lookup),NaN,lon_lookup),
+		             	      latlon.imputed = 'Y')
+	
+	# Untangle the bedrooms to get one row per dwelling. Cool function uncount()!!
+	# NB 6+ bedrooms gets mapped to 6. Just 1 or 2 bedrooms=0
+	xx <- ppl %>% select(project_number,bppdf_row_wid,starts_with("redev_bedrm")) %>% 
+		            pivot_longer(cols=starts_with("redev_bedrm")) %>% 
+		            mutate(bedrooms = as.integer(substr(name,12,12))) %>% 
+		            select(-name) %>% 
+		            filter(value>0) %>% 
+		            uncount(value) %>% 
+		            group_by(project_number) %>% 
+		            mutate(project_dwelling_number = row_number()) %>% 
+		            ungroup()
+		            	           
+	ppl <- ppl %>% right_join(xx,by=c("project_number"="project_number",
+		                                "bppdf_row_wid"="bppdf_row_wid")) %>% 
+		             select(-starts_with("redev_bedrm"))
+	
+	
+	# Finally some extra variables
+	# Days2delivery will help us keep only those with delivery within pipeline window
+	# Days void (negative values) will let us put the priorities on the same scale as the voids
+	# No DMOD information, unfortunately, and no property_type_code either
+	ppl <- ppl %>% mutate(days2delivery = as.integer(date(ymd(derived_proj_phase_delivery_dt))) - 
+			                                  as.integer(date(ymd(extrdt))),
+		                    days_void     = -days2delivery,
+		                    ndmodsp       = 0,
+		                    property_type_code = 'UNK') 
+		
+	return(ppl)
+	
+}
+################################################################################
+# Extracts other properties
+#
+my.extract.properties.other.fn <- function(conn){
+	
+	pot <- data.frame(other_pref   = c(12345677,12345678,12345679),
+		                other_pref2  = c(-2,-2,-2),
+                    bedrooms     = c(7,7,7),
+                    zone         = c("OTAGO AND SOUTHLAND","OTAGO AND SOUTHLAND","OTAGO AND SOUTHLAND"),
+				            zone.imputed = c('N','N','N'),
+	                  placement_address      = c("Trademe Terrace 1 Waverley Dunedin",
+	                  	                         "Trademe Terrace 2 Waverley Dunedin",
+	                  	                         "Trademe Terrace 3 Waverley Dunedin"),
+                    ndmodsp      = c(0,0,0),
+		                days_void    = c(-30,-30,-30),
+				            days2delivery= c(30,30,30),
+                    lon          = c(170.529972,170.529972,170.529972),
+                    lat          = c(-45.882491,-45.882491,-45.882491),
+		                latlon.imputed = c('N','N','N'),
+		                property_type_code = c('HSS','HSS','HSS'))
+	
+	return(pot)
+	
+}
+################################################################################
+# Households: BIT Applications from existing tenants. 
+# Some cleaning eg Strip commas etc from address.
+#
+my.extract.households.bitapp.fn <- function(conn) {
+	
+	# Get the applications. No missing lats,lons or zones
+	query <- read_file("./sql/pl_app_01_query_bit_applications.sql")
+	hba <- dbGetQuery(conn,query)  %>% 
+		             janitor::clean_names() %>% 
+		             mutate(zone						= curr_manager_hws_desc,
+		             	      zone.imputed		= 'N',
+		             	      lat           	= property_latitude,
+		             	      lon 						= property_longitude,
+		             	      latlon.imputed	= 'N',
+		             	      days_waiting    = as.integer(date(ymd(extrdt))) -
+		             		                      as.integer(date(ymd(application_received_dt))))
+			                                  
+	hba$property_name     <- my.strip.fn(hba$property_name)
+  hba$placement_address <- my.strip.fn(hba$placement_address)
+	
+	# DMOD counts and merge in
+	query <- read_file("./sql/pl_app_01_query_dmodsh.sql")
+	tmp <- dbGetQuery(conn,query)  %>% janitor::clean_names()  
+	hba <- hba %>% left_join(tmp,by=c("lettable_unit_code"="property_ref"))
+	rm(tmp)
+	
+	
+	# Now the get preferred letting areas for current live applications
+	query <- read_file("./sql/pl_app_01_query_bit_letting_areas.sql")
+	pla <- dbGetQuery(conn,query)  %>% 
+		             janitor::clean_names() %>% 
+		             select(application_reference_no,lar_code)
+	
+	# Merge with larcode to zone lookup
+	# Inner join is good enough, then just pick the distinct zones
+	pla <- pla %>% inner_join(lookup.lc2z,by=c("lar_code"="lar_code")) %>% 
+								 filter(zone_lookup != "") %>% 
+		             arrange(application_reference_no) %>% 
+		             select(-lar_code) %>% 
+		             distinct()
+	
+	# Concatenate all the zones into one text-string to get preferred zones
+	pla <- pla %>%  group_by(application_reference_no) %>% 
+		              summarise(zoneprefs = paste(zone_lookup,collapse=';')) %>% 
+		              ungroup() 
+	
+	# Join back onto list of applicants
+	hba <- hba %>% left_join(pla,by=c("application_reference_no"="application_reference_no"))
+	rm(pla)
+		
+	return(hba)
+}
+################################################################################
+# Households: MSD waitlist applicants
+# Some cleaning eg Strip commas etc from address.
+# And quite a bit of imputation
+#
+my.extract.households.msdwait.fn <- function(conn) {
+	
+	# Now the main list of applicants
+	query <- read_file("./sql/pl_app_01_query_msd_waitlist_applicants.sql")
+	hmw <- dbGetQuery(conn,query)  %>% 
+		             janitor::clean_names() %>% 
+		             mutate(emergency_housing_ind = ifelse(str_detect(curr_housing_circum_name,
+		             	                                                regex('Emergency',ignore_case=TRUE)) |
+		             		                                   str_detect(move_from_accom_comments_text,
+		             		                                   	          regex('Emergency',ignore_case=TRUE)),1,0),
+		             			  days_waiting    = as.integer(date(ymd(extrdt))) -
+		             		                      as.integer(date(ymd(waitlist_start_dt)))) %>% 
+		             select(case_reference,waitlist_start_dt,required_bedrooms_cnt,priority_rating_code,
+		             	      fasttrack_ind,fasttrack_code,fasttrack_rh_code,fasttrack_ot_code,fasttrack_eh_code,
+		             	      accessibilty_score,post_cd,emergency_housing_ind,
+		             	      rpt_register, rpt_transfer_register_status,risk_register_code, risk_register_desc,
+		                    wet_area_shower_flg,wet_areas_shower_toilet_flg,shower_cubicle_flg,bath_flg,                      
+	                      bidet_flg,rails_in_bathroom_flg,rails_in_toilet_flg,lowered_toilet_flg,            
+	                      second_toilet_flg,shower_bed_flg,bathroom_shower_door_flg,bathroom_lever_handles_flg,    
+	                      kitchen_lever_handles_taps_flg,partially_modified_kitchen_flg,
+		                    fully_modified_kitchen_flg,wide_door_ways_flg,            
+	                      wide_hallways_flg,low_door_handles_flg,low_light_switches_flg,ceiling_hoist_flg,          
+	                      lift_access_flg,access_rails_flg,level_access_required_flg,ramps_flg,
+		             	      swn,days_waiting,alert_code)   # NB Not all _flg variables are selected here
+	
+	# Part 1 contains basic info
+	part1 <- hmw %>% select(case_reference,waitlist_start_dt,required_bedrooms_cnt,priority_rating_code,
+		             	      fasttrack_ind,fasttrack_code,fasttrack_rh_code,fasttrack_ot_code,fasttrack_eh_code,
+		                    accessibilty_score,post_cd,emergency_housing_ind,
+		                    rpt_register, rpt_transfer_register_status, risk_register_code, risk_register_desc,
+		                    swn,days_waiting,alert_code)
+	
+	# Part 2 contains flags for calculating DMOD score
+	part2 <- hmw %>% select(case_reference,ends_with("_flg")) %>% 
+		        pivot_longer(cols=ends_with("_flg"),names_to="flg") %>% 
+		        mutate(count = ifelse(value=='Y',1,0)) %>% 
+		        group_by(case_reference) %>% 
+		        summarise(ndmodsh=sum(count)) %>% 
+		        ungroup()
+
+	# Join back together
+	hmw <- part1 %>% inner_join(part2,by=c("case_reference"="case_reference"))
+	
+	# Cleanup
+	rm(part1,part2)
+	
+	# Merge with postcode to lat/lon lookup and with postcode to zone lookup
+	# Outer joins so we can mark those with no lat/lon/zonefor DQ report
+	# All imputed data
+	hmw <- hmw %>% left_join(lookup.pc2ll,by=c("post_cd"="postcode")) %>% 
+		             left_join(lookup.pc2z,by=c("post_cd"="postcode")) %>% 
+		             mutate(zone						= ifelse(is.na(zone_lookup),'Missing',zone_lookup),
+		             	      zone.imputed		= 'Y',
+		             	      lat 						= ifelse(is.na(lat_lookup),NaN,lat_lookup),
+		             	      lon 						= ifelse(is.na(lon_lookup),NaN,lon_lookup),
+		             	      latlon.imputed	= 'Y')
+
+	# Now preferred letting areas for these applicants
+	query <- read_file("./sql/pl_app_01_query_msd_waitlist_letting_areas.sql")
+	pla <- dbGetQuery(conn,query)  %>% 
+		             janitor::clean_names() 
+	
+	# Merge with postcode to zone lookup
+	# Inner join is good enough, then just pick the distinct zones
+	pla <- pla %>% inner_join(lookup.pc2z,by=c("post_cd"="postcode")) %>% 
+		             select(-post_cd,-letting_area_cnt) %>% 
+		             arrange(case_reference) %>% 
+		             distinct()
+	
+	# Concatenate all the zones into one text-string to get preferred zones
+	pla <- pla %>%  group_by(case_reference) %>% 
+		              summarise(zoneprefs = paste(zone_lookup,collapse=';')) %>% 
+		              ungroup() 
+	
+	# Join into list of applicants
+	hmw <- hmw %>% left_join(pla,by=c("case_reference"="case_reference"))
+	rm(pla)
+	
+	# Finally some extra variables
+	# No property_type_code unfortunately
+	hmw <- hmw %>% mutate(property_type_code = 'UNK') 
+	
+	return(hmw)
+}
+################################################################################
+# Households: Other 
+#
+my.extract.households.other.fn <- function(conn) {
+
+	hot <- data.frame(other_href  = c("87654321","87654322","87654323"),
+		                other_href2 = c(-2,-2,-2),
+	                  bedrooms    = c(7,7,7),
+	                  zone        = c("CHRISTCHURCH SOUTH","CHRISTCHURCH SOUTH","CHRISTCHURCH SOUTH"),
+				            zone.imputed= c('N','N','N'),
+		                zoneprefs   = c("OTAGO AND SOUTHLAND","OTAGO AND SOUTHLAND","OTAGO AND SOUTHLAND"),
+		                placement_address     = c("Buckingham Palace 1 Allenton Ashburton",
+		                	                        "Buckingham Palace 2 Allenton Ashburton",
+		                								          "Buckingham Palace 3 Allenton Ashburton"),
+	                  dmod_score  = c(0,0,0),
+	                  lon         = c(171.743779,171.743779,171.743779),
+	                  lat         = c(-43.889213,-43.889213,-43.889213),
+		             	  latlon.imputed	= c('N','N','N'),
+				            risk        = c(0,0,0),
+		                days_waiting=c(20,20,20),
+		                alert_code  =c(0,1,2),
+		                property_type_code = c('HSS','HSS','HSS'))
+	return(hot)
+}
+################################################################################
+# Offers: Current open 
+#
+my.extract.offers.curropen.fn <- function(conn) {
+
+	query <- read_file("./sql/pl_app_01_query_offers_current_open.sql")
+	oco <- dbGetQuery(conn,query)  %>% janitor::clean_names() 
+	return(oco)
+	
+}
+################################################################################
+# Offers: Recently withdrawn or declined
+#
+my.extract.offers.withdec.fn <- function(conn) {
+
+	query <- read_file("./sql/pl_app_01_query_offers_withdrawn_declined.sql")
+	owd  <- dbGetQuery(conn,query)  %>% janitor::clean_names() 
+	return(owd)
+	
+}
+################################################################################
+# Exclusions: properties and/or households that  are tagged, 
+# ringfenced or otherwise marked as excluded from the matching process
+#
+my.extract.exclusions.fn <- function(conn) {
+
+	  # Dummy Data for testing
+	
+	  nn <- 3
+	  
+	  property_ids           <- rep(0,nn)
+	  property_id_srcs       <- rep("",nn)
+	  household_ids          <- rep(0,nn)
+	  household_id_srcs      <- rep("",nn)
+	  exclusion_ids          <- rep(0,nn)
+	  exclusion_descs        <- rep("",nn)
+	  exclusion_start_dts    <- rep(ymd('2999-12-31'),nn)
+	  
+	  i                      <- 1
+    property_ids[i]        <- "12345679"
+    property_id_srcs[i]    <- "Other_property_ref_no"
+    household_ids[i]       <- ""
+    household_id_srcs[i]   <- ""
+    exclusion_ids[i]       <- i
+    exclusion_descs[i]     <- "Ringfenced: CHP"
+    exclusion_start_dts[i] <- ymd('2024-01-01')
+    
+  	i                      <- 2
+    property_ids[i]        <- ""
+    property_id_srcs[i]    <- ""
+    household_ids[i]       <- "87654323"
+    household_id_srcs[i]   <- "Other_household_ref_no"
+    exclusion_ids[i]       <- i
+    exclusion_descs[i]     <- "Excluded: CSO"
+    exclusion_start_dts[i] <- ymd('2024-01-01')
+    
+    i                      <- 3
+    property_ids[i]        <- "12345678"
+    property_id_srcs[i]    <- "Other_property_ref_no"
+    household_ids[i]       <- "87654322"
+    household_id_srcs[i]   <- "Other_household_ref_no"
+    exclusion_ids[i]       <- i
+    exclusion_descs[i]     <- "Tagged"
+    exclusion_start_dts[i] <- ymd('2024-01-01')
+
+  	exc <- data.frame(property_id        = property_ids,
+  		                property_id_src    = property_id_srcs,
+  		                household_id       = household_ids,
+  		  		          household_id_src   = household_id_srcs,
+  		                exclusion_id       = exclusion_ids,
+  		  		          exclusion_desc     = exclusion_descs,
+  		                exclusion_start_dt = exclusion_start_dts)
+
+	return(exc)
+	
+}
+
+################################################################################
+################################################################################
+####### Functions for cleaning/standardisation #################################
+################################################################################
+################################################################################
+
+################################################################################
+# Returns clean void properties. Raw columns left in for checking and EDA.
+#
+#filter(between(raw.days_void, pwindow.const.dv.min, pwindow.const.dv.max)) %>% 
+#
+my.std.properties.void.fn <- function() {
+	
+	pvd <- fread(raw.properties.vd,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+		          mutate(pid            	= paste0("Void_ref_no:",raw.void_reference_no),
+										 pid2           	= paste0("Lettable_unit_code:",raw.lettable_unit_code),
+										 raw.ndmodsp			= dplyr::coalesce(raw.ndmodsp,0),
+										 raw.days_void  	= as.integer(date(ymd_hms(raw.extract_date)) - 
+										  	     		    		           date(ymd_hms(raw.void_date))),
+	                   psource    			= psource.const.void.str,
+										 pzone      			= raw.zone,
+	                   pzone.imputed		= raw.zone.imputed,
+		                 paddress   			= ifelse(raw.placement_address=="",
+		          		                             ifelse(raw.formatted_address=="",
+		                 	                                ifelse(raw.property_name=="",
+		                 	                         	             "Missing",
+		                 	                         	              raw.property_name),
+		                 	                                raw.formatted_address),
+		                 	                         raw.placement_address),
+		          	     paddress         = str_to_title(paddress),
+										 plon       			= raw.property_longitude,
+										 plat       			= raw.property_latitude,
+		          	     platlon.imputed	= raw.latlon.imputed,
+		          	     palert           = 0,
+		          	     ptype            = raw.property_type_code,
+		          	     pd2d             = -raw.days_void) %>% 
+							distinct_all()
+
+	# Standardise bedrooms
+	pvd$pbeds <- my.std.bedroom.fn(pvd$raw.number_of_bedrooms_cnt)
+	
+	# Turn number of modifications into our DMOD score
+	pvd$pdmod_score <- my.std.dmodscore.fn(pvd$raw.ndmodsp)
+	
+	# Calculate priority score
+	pvd$ppriority <- my.std.ppriority.dv.fn(pvd$raw.days_void)
+
+	return(pvd)
+	
+}
+################################################################################
+# Returns standardised pipeline properties
+#
+# filter(between(raw.days2delivery, pwindow.const.d2d.min, pwindow.const.d2d.max)) %>% 
+#
+my.std.properties.pipeline.fn <- function(){
+	
+		ppl <- fread(raw.properties.pl,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+						  mutate(pid        			= paste0("Pipeline_ref_no:",raw.project_number,
+						  	                                              "-",raw.project_dwelling_number),
+					  		     pid2       			= paste0("Pipeline_ref_no2:",raw.project_dwelling_number,
+					  		     	                                         "-",date(ymd_hms(raw.derived_proj_phase_delivery_dt))),
+		                 psource    			= psource.const.pipe.str,
+					  				 pzone      			= raw.zone,
+		                 pzone.imputed		= raw.zone.imputed,
+						  			 paddress         = str_to_title(raw.placement_address),
+				  	    		 plon       			= raw.lon,
+				  	    		 plat       			= raw.lat,
+						  	     platlon.imputed  = raw.latlon.imputed,
+						  	     palert           = ifelse(str_detect(raw.adg_team_name,fixed('HDS')),1,0),
+						  	     ptype            = raw.phase_build_type_name,
+						  	     pd2d             = raw.days2delivery)
+		
+		# Standardise bedrooms
+	  ppl$pbeds <- my.std.bedroom.fn(ppl$raw.bedrooms)
+		
+		# DMOD score
+	  ppl$pdmod_score <- my.std.dmodscore.fn(ppl$raw.ndmodsp)
+	
+		# Calculate priority score
+	  ppl$ppriority <- my.std.ppriority.d2d.fn(ppl$raw.days2delivery)
+		
+		return(ppl)
+
+}
+################################################################################
+# Returns standardised other properties
+#
+my.std.properties.other.fn <- function(){
+	pot <- fread(raw.properties.ot,header=TRUE,sep=",",stringsAsFactors = FALSE) %>%  
+					  	mutate(pid        			= paste0("Other_property_ref_no:",raw.other_pref),
+					  		     pid2       			= paste0("Other_property_ref_no2:",raw.other_pref2),
+		                 psource    			= psource.const.oth.str,
+					  				 pzone      			= raw.zone,
+		                 pzone.imputed		= raw.zone.imputed,
+					  		     paddress         = str_to_title(raw.placement_address),
+				  	    		 plon       			= raw.lon,
+				  	    		 plat       			= raw.lat,
+					  		     platlon.imputed	= raw.latlon.imputed,
+					  		     palert           = 0,
+					  		     ptype            = raw.property_type_code,
+					  		     pd2d             = 30) 
+	
+	 # Standardise bedrooms
+	 pot$pbeds <- my.std.bedroom.fn(pot$raw.bedrooms)
+	 
+	 # DMOD score
+	 pot$pdmod_score <- my.std.dmodscore.fn(pot$raw.ndmodsp)
+	
+	 # Priority score
+	 pot$ppriority <- my.std.ppriority.d2d.fn(pot$raw.days2delivery)
+	
+	return(pot)
+}
+################################################################################
+# Returns clean BIT application households. Raw columns left in for checking and EDA.
+#
+my.std.households.bit.fn <- function() {
+
+	hba <- fread(raw.households.ba,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+						  mutate(hid        					= paste0("Application_ref_no:",raw.application_reference_no),
+						  	     hid2       					= paste0("Tenancy_ref_no:",raw.tenancy_reference_no),
+										 raw.ndmodsh					= dplyr::coalesce(raw.ndmodsh,0),
+						         hpriority  					= dplyr::coalesce(matts.lookup[raw.q_795_answer],5),
+						  	     hprioritycode        = dplyr::coalesce(raw.q_795_answer,'N/A'),
+						  	     hsource    					= hsource.const.bit.str,
+						  			 hzone        				= raw.zone,
+						  	     hzone.imputed				= raw.zone.imputed,
+						  	     hzoneprefs 					= ifelse(raw.zoneprefs=="",hzone,raw.zoneprefs),
+						  			 haddress             = str_to_title(raw.placement_address),
+						  	     hlon       					= raw.lon,
+						  	     hlat       					= raw.lat,
+						  	     hlatlon.imputed			= raw.latlon.imputed,
+									   halert               = raw.alert_code,
+						  	     htype                = raw.property_type_code)
+	
+	# Standardise bedrooms
+	hba$hbeds <- my.std.bedroom.fn(hba$raw.bedrooms_req_cnt)
+	
+	# Standardise DMOD scores
+	hba$hdmod_score <- my.std.dmodscore.fn(hba$raw.ndmodsh)
+		
+
+	
+	return(hba)
+}
+
+################################################################################
+# Returns clean MSD households. Raw columns left in for checking and EDA.
+#
+# Raw priority rating codes run from A9 to A20  and from B8-B15.
+#
+# And there are the fast-track indicators of various kinds
+# Info on this taken from Doc by Sarcha Hayter, Chief advisor
+#
+# So algorithm to calculate priority score in range 1-5 is:
+# 	Chop off first character
+# 	If first char is B then subtract 7 (so B values go from 1 to 8, A values from 9 to 20)
+#   So values now go from 1 to 20. 
+#
+#   If Fast track OT and OR RH  then set value = 23
+#   Else if Fasttrack EH then set value = 22
+#   Else if fasttrack set value =21   (there are a few of these)
+#
+# So the range is now 1-23
+#
+my.std.households.msdwait.fn <- function() {
+
+	hmw <- fread(raw.households.mw,header			=TRUE,sep=",",stringsAsFactors = FALSE) %>%
+									  mutate(hid        			= paste0("Case_ref_no:",raw.case_reference),
+								  	       hid2       			= paste0("SWN:",raw.swn),
+									  	     raw.ndmodsh      = dplyr::coalesce(raw.ndmodsh,0),
+									  	     raw.emergency_housing_ind = dplyr::coalesce(raw.emergency_housing_ind,0),
+									  	     raw.fasttrack_code        = dplyr::coalesce(raw.fasttrack_code,''),
+									  			 raw.fasttrack_rh_code     = dplyr::coalesce(raw.fasttrack_rh_code,''),
+									  			 raw.fasttrack_ot_code     = dplyr::coalesce(raw.fasttrack_ot_code,''),
+									  			 raw.fasttrack_eh_code     = dplyr::coalesce(raw.fasttrack_eh_code,''),
+									  	     raw.year_waitlist_start   = year(ymd_hms(raw.waitlist_start_dt)),  
+									  	     raw.days_on_waitlist      = as.integer(ymd(extrdt) - date(ymd_hms(raw.waitlist_start_dt))),
+									  	     raw.p1     			= substr(raw.priority_rating_code,1,1),                  # First character
+									  	     raw.p2						= as.integer(substr(raw.priority_rating_code,2,3)),  
+									  	     raw.p3     			= ifelse(raw.p1=='B',raw.p2-7,raw.p2),                   # Scale 20 (high) to 1 (low)
+									  	     raw.p4           = case_when((!raw.fasttrack_ot_code == '' | !raw.fasttrack_rh_code == '') ~ 23,
+									  	     	                             !raw.fasttrack_eh_code == '' ~ 22,
+									  	     	                             !raw.fasttrack_code    == '' ~ 21,
+									  	     	                            TRUE                          ~ raw.p3), # Scale 23(High) to 1 (low)
+								           hpriority      	= (114.0 - 4.0 * raw.p4)/22.0,                       # Get scale 1 (high) - 5 (low)
+									  	     hprioritycode    = paste0(raw.priority_rating_code,
+									  	     	                         raw.fasttrack_code,
+									  	     	                         raw.fasttrack_rh_code,
+									  	     	                         raw.fasttrack_ot_code,
+									  	     	                         raw.fasttrack_eh_code),
+									  	     hsource    			= hsource.const.msd.str,
+									  			 hzone      			= raw.zone,
+									  	     hzone.imputed		= raw.zone.imputed,
+									  			 hzoneprefs 			= ifelse(raw.zoneprefs=="",hzone,raw.zoneprefs),
+									  	     haddress   			= paste0('Postcode: ',str_pad(raw.post_cd,4,pad='0')),
+								  	       hlon       			= raw.lon,
+								  	       hlat       			= raw.lat,
+									  	     hlatlon.imputed	= raw.latlon.imputed,
+									  	     halert           = raw.alert_code,
+									  	     htype            = raw.property_type_code)
+	
+	# Standardise bedrooms
+	hmw$hbeds <- my.std.bedroom.fn(hmw$raw.required_bedrooms_cnt)
+	
+	# Standardise DMOD score 
+	hmw$hdmod_score <- my.std.dmodscore.fn(hmw$raw.ndmodsh)
+	
+	return(hmw)
+}
+################################################################################
+# Returns clean other Households. Raw columns left in for checking and EDA.
+my.std.households.other.fn <- function(){
+	
+	hot <- fread(raw.households.ot,header=TRUE,sep=",",stringsAsFactors = FALSE) %>%
+							  mutate(hid        			= paste0("Other_household_ref_no:",raw.other_href),
+						  	       hid2       			= paste0("Other_household_ref_no2:",raw.other_href2),
+						  	       hdmod_score			= raw.dmod_score,
+						           hpriority  			= 5,
+							  	     hprioritycode    = 'TEST',
+							  	     hsource    			= hsource.const.oth.str,
+							  			 hzone      			= raw.zone,
+							  	     hzone.imputed		= raw.latlon.imputed,
+                       hzoneprefs       = ifelse(raw.zoneprefs=="",hzone,raw.zoneprefs),
+							  			 haddress         = str_to_title(raw.placement_address),
+						  	       hlon       			= raw.lon,
+						  	       hlat       			= raw.lat,
+							  	     hlatlon.imputed	= raw.latlon.imputed,
+							  	     halert      		  = raw.alert_code,
+							  	     htype            = raw.property_type_code) 
+	
+  # Standardise bedrooms
+	hot$hbeds <- my.std.bedroom.fn(hot$raw.bedrooms)
+
+	return(hot)
+	
+}
+################################################################################
+# Returns clean current offers. Raw columns left in for checking and EDA.
+#
+my.std.offers.current.open.fn <- function() {
+
+	oco <- fread(raw.offers.co,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+	                mutate(hid  = paste0("Application_ref_no:",raw.application_reference_no),
+	                	     hid2 = paste0("Tenancy_ref_no:",raw.tenancy_reference_no),
+	                	     pid  = paste0("Void_ref_no:",raw.void_reference_no),
+	                	     pid2 = paste0("Lettable_unit_code:",raw.lettable_unit_code),
+												 oid  = paste0("Offer_ref_no:",raw.offer_reference_no),
+	                		   ostdt = as.Date(ymd_hms(raw.current_status_dt)),
+	                			 ostcode = raw.current_status_code,
+	                		   ostdesc = raw.current_status_desc)
+	return(oco)
+}		
+################################################################################
+# Returns clean with/dec offers. Raw columns left in for checking and EDA.
+#
+my.std.offers.withdrawn.declined <- function(){
+
+		owd <- fread(raw.offers.wd,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+	                mutate(hid  = paste0("Application_ref_no:",raw.application_reference_no),
+	                	     hid2 = paste0("Tenancy_ref_no:",raw.tenancy_reference_no),
+	                	     pid  = paste0("Void_ref_no:",raw.void_reference_no),
+	                	     pid2 = paste0("Lettable_unit_code:",raw.lettable_unit_code),
+												 oid  = paste0("Offer_ref_no:",raw.offer_reference_no),
+	                		   ostdt = as.Date(ymd_hms(raw.current_status_dt)),
+	                		   ostcode = raw.current_status_code,
+	                		   ostdesc = raw.current_status_desc) 
+		
+		return(owd)
+}
+################################################################################
+# Returns clean exclusions. Raw columns left in for checking and EDA.
+#
+my.std.exclusions.fn <- function(){
+
+	exc <- fread(raw.exclusions,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+							 mutate(pid  = ifelse(is.na(raw.property_id), "",paste0(raw.property_id_src, ":",raw.property_id)),
+											hid  = ifelse(is.na(raw.household_id),"",paste0(raw.household_id_src,":",raw.household_id)),
+											exid   = raw.exclusion_id,
+											exdesc = raw.exclusion_desc, 
+							 				exstdt = raw.exclusion_start_dt)
+	return(exc)
+		
+}	
+################################################################################
+# Function to convert days2delivery to standard priority score 1-5
+#
+# Value = 1 means High priority eg not long until delivery
+# Value = 5 means low priority  eg pipeline property not due for ages 
+#
+my.std.ppriority.d2d.fn <- function(d2d){
+	
+	my.max <- 5
+	my.min <- 1
+
+  xx <- (d2d - pwindow.const.d2d.min) / 
+  	      (pwindow.const.d2d.max - pwindow.const.d2d.min)  # Standard range 0-1
+  yy <- (my.max - my.min ) * xx + my.min                   # Range 1 to 5
+  return(yy)
+}
+################################################################################
+# Function to convert days_void to standard priority score 1-5
+#
+# Value = 1 means High priority eg just become void
+# Value = 5 means low priority  eg void for a very long time
+#
+my.std.ppriority.dv.fn <- function(dv){
+	my.max <- 5
+	my.min <- 1
+
+  xx <- (dv - pwindow.const.dv.min) / 
+  	      (pwindow.const.dv.max - pwindow.const.dv.min)    # Standard range 0-1
+  yy <- (my.max - my.min ) * xx + my.min                   # Range 1 to 5
+  return(yy)
+}
+################################################################################
+# Function to standardise number of bedrooms. Used for households and properties
+my.std.bedroom.fn <- function(nbeds){
+	xbeds <- ifelse(nbeds<=0,1,ifelse(nbeds>6,6,nbeds))
+	return(xbeds)
+}
+################################################################################
+# Function to return DMOD score from number of distinct mods made or required
+#
+my.std.dmodscore.fn <- function(nm){
+		ds <- ifelse(nm == 0,0,
+			      ifelse(nm <=3,1,
+				      ifelse(nm <=5,2,3)))
+    return(ds)
+}
+################################################################################
+# Update property match status after first step of cleaning
+#
+my.std.pmstat.fn <- function(pp){
+	
+	# Duplicate pid values
+	tmp <- pp %>% group_by(pid) %>%  summarise(nn=n()) %>%  ungroup() %>% filter(nn>1) %>% select(-nn)
+	if(nrow(tmp) > 0){
+		pp <- pp %>%  mutate(pmstat = ifelse(pmstat=="" & pid %in% tmp$pid,mstat.const.duplicate.id,pmstat))
+	}
+	
+	# Look for duplicate pid2 values. Exclude those with pid2 = blahblahblah:-2
+	tmp <- pp %>% filter(!grepl('-2',pid2)) %>% 
+		            group_by(pid2) %>%  
+		            summarise(nn=n()) %>%  
+		            ungroup() %>% 
+		            filter(nn>1) %>% 
+		            select(-nn)
+	if(nrow(tmp) > 0){
+	  pp <- pp %>%  mutate(pmstat = ifelse(pmstat=="" & pid2 %in% tmp$pid2,mstat.const.duplicate.id,pmstat))
+	}
+	
+	# Pzone values not found
+	tmp <- pp %>% filter(pzone == 'Missing') %>% select(pid)
+	if(nrow(tmp) > 0){
+		pp <- pp %>% mutate(pmstat = ifelse(pid %in% tmp$pid,mstat.const.nolatlonzone,pmstat))
+	}
+	
+	# Final catch-all check for missing values
+	tmp <- pp %>% filter(if_any(everything(),is.na))
+	if(nrow(tmp) > 0){
+		pp <- pp %>%  mutate(pmstat = ifelse(pmstat=="" & pid %in% tmp$pid,mstat.const.missing,pmstat))
+	}
+	rm(tmp)
+	
+	return(pp)
+}
+################################################################################
+# Mark properties under offer or otherwise excluded
+#
+my.std.pmstat2.fn <- function(pp,oo,ee){
+	
+	tmp <- oo %>% filter(ostcode %in% c('AOF','OFF')) %>% select(pid) 
+	if(nrow(tmp) > 0){
+		pp <- pp %>% mutate(pmstat = ifelse(pmstat=="" & pid %in% tmp$pid,mstat.const.underoffer,pmstat))
+	}
+	
+	tmp <- ee %>% filter(pid != ""  & exstdt <= ymd(extrdt)) %>% select(pid,exdesc)
+	if(nrow(tmp) > 0){
+		pp <- pp %>% left_join(tmp,by=c("pid"="pid")) %>% 
+			           mutate(pmstat = ifelse(pmstat=="" & exdesc != "",
+			                           exdesc,
+			                           pmstat)) %>% 
+			           select(-exdesc)
+	}
+
+	return(pp)
+}
+################################################################################
+# Update household match status after first step of cleaning
+#
+my.std.hmstat.fn <- function(hh){
+	
+	# Duplicate hid values
+	tmp <- hh %>% group_by(hid) %>%  summarise(nn=n()) %>%  ungroup() %>% filter(nn>1) %>% select(-nn)
+	if(nrow(hh) > 0){
+		hh <- hh %>%  mutate(hmstat = ifelse(hmstat=="" & hid %in% tmp$hid,mstat.const.duplicate.id,hmstat))
+	}
+	
+	# Look for duplicate hid2 values. Exclude those with hid2 = blahblahblah:-2
+	tmp <- hh %>% filter(!grepl('-2',hid2)) %>%
+		            group_by(hid2) %>% 
+		            summarise(nn=n()) %>%  
+		            ungroup() %>% 
+		            filter(nn>1) %>% 
+		            select(-nn)
+	if(nrow(hh) > 0){
+		hh <- hh %>%  mutate(hmstat = ifelse(hmstat=="" & hid2 %in% tmp$hid2,mstat.const.duplicate.id,hmstat))
+	}
+	
+	# hzone values not found
+	tmp <- hh %>% filter(hzone == 'Missing') %>% select(hid)
+	if(nrow(tmp) > 0){
+		hh <- hh %>% mutate(hmstat = ifelse(hid %in% tmp$hid,mstat.const.nolatlonzone,hmstat))
+	}
+	
+	# Missing lat/lons
+	tmp <- hh %>% filter(is.na(hlat) | is.na(hlon)) %>% select(hid)
+	if(nrow(tmp) > 0){
+		hh <- hh %>% mutate(hmstat = ifelse(hid %in% tmp$hid,mstat.const.nolatlonzone,hmstat))
+	}
+	
+	# Final catch-all check for missing values
+	tmp <- hh %>% filter(if_any(everything(),is.na))
+	if(nrow(tmp) >0){
+		hh <- hh %>%  mutate(hmstat = ifelse(hmstat=="" & hid %in% tmp$hid,mstat.const.missing,hmstat))
+	}
+	rm(tmp)
+	
+	freq(hh$hmstat)
+	return(hh)
+}
+################################################################################
+# Mark households under offer or otherwise excluded
+#
+my.std.hmstat2.fn <- function(hh,oo,ee){
+	
+	tmp <- oo %>% filter(ostcode %in% c('AOF','OFF')) %>% select(hid) 
+	if(nrow(tmp) > 0){
+		hh <- hh %>% mutate(hmstat = ifelse(hmstat=="" & hid %in% tmp$hid,mstat.const.underoffer,hmstat))
+	}
+	
+	tmp <- ee %>% filter(hid != ""  & exstdt <= ymd(extrdt)) %>% select(hid,exdesc)
+	if(nrow(tmp) > 0){
+		hh <- hh %>% left_join(tmp,by=c("hid"="hid")) %>% 
+			           mutate(hmstat = ifelse(hmstat=="" & exdesc != "",
+			                           exdesc,
+			                           hmstat)) %>% 
+			           select(-exdesc)
+	}
+	
+	return(hh)
+}
+################################################################################
+# Functions to jitter positions and priorities. 
+# More jitter when lat/lons have been imputed
+#
+my.jitter.pp.fn <- function(pp){
+	
+  eps <- 0.00005
+  eps2 <- 0.01
+  pp <- pp %>%  arrange(pid)
+  nn <- nrow(pp)
+  set.seed(13)
+  dlon      <- eps  * runif(nn,min=-5,max=5)
+  dlat      <- eps  * runif(nn,min=-5,max=5)
+  pp$plon   <- pp$plon + ifelse(pp$platlon.imputed=='Y',50,1) * dlon    
+  pp$plat   <- pp$plat + ifelse(pp$platlon.imputed=='Y',50,1) * dlat    
+  return(pp)
+}
+################################################################################
+my.jitter.hh.fn <- function(hh){
+	eps  <- 0.00005
+	eps2 <- 0.00001
+	hh <- hh %>%  arrange(hid)
+	nn <- nrow(hh)
+	set.seed(13)
+  dlon      <- eps  * runif(nn,min=-5,max=5)
+  dlat      <- eps  * runif(nn,min=-5,max=5)
+  dpriority <- eps2 * runif(nn,min= 0,max=100)
+	hh$hlon   <- hh$hlon + ifelse(hh$hlatlon.imputed=='Y',50,1) * dlon   
+	hh$hlat   <- hh$hlat + ifelse(hh$hlatlon.imputed=='Y',50,1) * dlat   
+	hh$hpriority <- hh$hpriority + dpriority
+	
+	hh$hpriority <- ifelse(hh$hpriority>5,5.0,hh$hpriority)
+  hh$hpriority <- ifelse(hh$hpriority<1,1.0,hh$hpriority)
+	
+	return(hh)
+}
+################################################################################
+
+
+################################################################################
+################################################################################
+####### Functions for matching #################################################
+################################################################################
+################################################################################
+# Fn to load standardised data into common memory - All nz
+# Sample the MSD clients so the BIT-listers get a look-in
+# And restrict pipeline and void properties to specified windows
+#
+
+my.load.std.fn <- function(){
+	
+	pp <<- fread(std.properties,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+              select(pid,pid2,pbeds,pdmod_score,ppriority,psource,pzone,pzone.imputed,
+              	     paddress,plon,plat,platlon.imputed,palert,ptype,pmstat,pd2d)
+
+    hh <<- fread(std.households,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+              select(hid,hid2,hbeds,hdmod_score,hpriority,hprioritycode,
+                     hsource,hzone,hzone.imputed,hzoneprefs,
+              	     haddress,hlon,hlat,hlatlon.imputed,halert,htype,hmstat)
+
+    oo <<- fread(std.offers,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+                select(hid,hid2,hzone,pid,pid2,pzone,oid,ostdt,ostcode,ostdesc) 
+  
+    ee <<- fread(std.exclusions,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+  
+    zones <<- sort(unique(unlist(pp %>% filter(pmstat=="") %>% select(pzone))))
+  
+    istat <- my.window.pp.fn(dv.min  = pwindow.const.dv.min,
+    	                       dv.max  = pwindow.const.dv.max,
+    	                       d2d.min = pwindow.const.d2d.min,
+    	                       d2d.max = pwindow.const.d2d.max)    
+    
+	  istat <- my.sample.hh.fn(msd_sample_frac   = hsource.const.msd.sample.frac,
+		                         msd_sample_option = hsource.const.msd.sample.opt)
+	  
+	  return(0)
+
+}
+################################################################################
+# Functions to subset main variables to one or more zones ready for matching. 
+# ie removes p,h where match status already set. Tricky logic used in several 
+# places, esp for households with zone preferences
+#
+# Households may want to move, but properties generally do not.
+#
+# NB my.zones may be a single scalar string or a vector of strings.
+#
+# Also can be  used for all-NZ matching if my.zones contains "NZ"
+#
+# The subsetd versions are for display only - properties under offer are left in
+# and real numbers are rounded. # Do not use these subsetd versions for matching. 
+#
+################################################################################
+my.subset.pp.fn <- function(my.zones){
+	if("NZ" %in% my.zones){
+		p <- pp %>% filter(pmstat=="") 
+	} else {
+		p <- pp %>% filter(pzone %in% my.zones & pmstat=="")
+	}
+	return(p)
+}
+################################################################################
+my.subsetd.pp.fn <- function(my.zones){
+	if("NZ" %in% my.zones){
+		p <- pp 
+	} else {
+		p <- pp %>% filter(pzone %in% my.zones)
+	}
+	p <- p %>% mutate(ppriority = round(ppriority,4),
+		                plat      = round(plat,4),
+		                plon      = round(plon,4))
+	return(p)
+}
+################################################################################
+#
+my.subset.hh.fn <- function(my.zones){
+	
+	if("NZ" %in% my.zones){
+		
+		h <- hh %>% filter(hmstat=="") 
+		
+	} else {
+		
+		my.regex <- paste0('(',paste0(my.zones,collapse="|"),')')
+		
+	  hh$inprefzone <- str_detect(hh$hzoneprefs,my.regex)
+		
+		h <- hh %>% filter(inprefzone & hmstat == "" ) %>%  select(-inprefzone)
+	}
+	return(h)
+}
+################################################################################
+my.subsetd.hh.fn <- function(my.zones){
+	
+	if("NZ" %in% my.zones){
+		
+		h <- hh 
+		
+	} else {
+		
+		my.regex <- paste0('(',paste0(my.zones,collapse="|"),')')
+		
+		hh$inprefzone <- str_detect(hh$hzoneprefs,my.regex)
+		
+		h <- hh %>% filter(inprefzone) %>% select(-inprefzone)
+	}
+	
+	h <- h %>% mutate(hpriority = round(hpriority,4),
+		                hlat      = round(hlat,4),
+		                hlon      = round(hlon,4))
+	return(h)
+}
+################################################################################
+my.subset.oo.fn <- function(p,h){
+	o <- oo %>% filter(pid %in% p$pid | hid %in% h$hid) 
+	return(o)
+}
+################################################################################
+my.subsetd.oo.fn <- function(p,h){
+	o <- oo %>% filter(pid %in% p$pid | hid %in% h$hid) 
+	return(o)
+}
+################################################################################
+my.subsetd.ee.fn <- function(p,h){
+	e <- ee %>% filter(pid %in% p$pid | hid %in% h$hid) 
+	return(e)
+}
+################################################################################
+# Applies void and pipeline window limits
+#
+my.window.pp.fn <- function(dv.min,dv.max,d2d.min,d2d.max) {
+	
+	pp <<- pp %>% filter( (psource == psource.const.pipe.str & between(pd2d,d2d.min,d2d.max) ) |
+			                 (psource == psource.const.void.str & between(pd2d,-dv.max,-dv.min) ) |
+			                 (psource == psource.const.oth.str) )
+	
+	return(0)	
+}
+################################################################################
+# Marks sample of MSD households to exclude them from matching.
+# Yields approximate specified ratio by sampling or simply taking the 
+# highest priority households
+my.sample.hh.fn <- function(msd_sample_frac,msd_sample_option){
+	
+	set.seed(13)
+	
+	# First reset any pre-existing flags
+	hh <<- hh %>% mutate(hmstat = ifelse(hmstat==mstat.const.sampled.out,
+		                                  "",
+		                                  hmstat))
+	
+	# Now set flags according to option
+	if(0.0 <= msd_sample_frac & msd_sample_frac < 1.0){
+		
+		hh1 <- hh %>% filter(hmstat == "" &
+				                 hsource==hsource.const.msd.str) %>% 
+			            mutate(hpriority_inv=6-hpriority)
+		nn1 <- nrow(hh1)
+		
+		hh2 <- hh %>% filter(hmstat == "" &
+				                 !hsource==hsource.const.msd.str)
+		nn2 <- nrow(hh2)
+		
+		nn.required <- floor(nn2 * msd_sample_frac / (1.0 - msd_sample_frac))
+		
+		if(msd_sample_option == "Sample"){
+			my.hh <- hh1 %>% sample_n(nn.required,weight=hpriority_inv,replace=FALSE) 
+		} else {
+			my.hh <- hh1 %>% top_n(nn.required,wt=hpriority_inv) 			
+		}
+		
+	  hh <<- hh %>% mutate(hmstat = ifelse(hmstat=="" & 
+	  		                                 hsource==hsource.const.msd.str &
+	  		                                 !hid %in% my.hh$hid,
+	 	                                     "Sampled out",
+	 	                                     hmstat))
+	} 
+	return(0)
+}
+
+################################################################################
+# Update match status depending on match results. Unmatched will be left blank
+my.update.pmstat.fn <- function(p,m){
+
+		if(nrow(m) > 0){
+		
+			xx  <- m %>% select(pid,Recommend) %>% 
+			             mutate(mstat=paste0('Matched: ',Recommend)) %>% 
+			             select(-Recommend)
+		
+			p  <- p %>% left_join(xx,by=c("pid"="pid")) %>% 
+			            mutate(pmstat = ifelse(pmstat=="" & !is.na(mstat),
+			             	                     mstat,
+			             	                     pmstat)) %>% 
+				          select(-mstat)
+		}
+	  return(p)
+}
+################################################################################
+# Update match status depending on match results. Unmatched will be left blank
+my.update.hmstat.fn <- function(h,m){
+	
+	if(nrow(m) > 0){
+		
+			xx <- m  %>% select(hid,Recommend) %>% 
+				           mutate(mstat=paste0('Matched: ',Recommend)) %>% 
+				           select(-Recommend)
+				             
+			h <- h %>% left_join(xx,by=c("hid"="hid")) %>% 
+				         mutate(hmstat = ifelse(hmstat=="" & !(is.na(mstat)),
+				             	                  mstat,
+				             	                  hmstat)) %>% 
+				         select(-mstat)
+	
+	}
+	return(h)
+}
+################################################################################
+# Identifies Fasttrack from priority code
+my.fasttrack.fmt <- function(pc){
+	my.regex <- '(F|RH|EH|OT)'
+	xx <- ifelse(str_detect(pc,my.regex),1,0)
+	return(xx)
+}
+################################################################################
+# Post-match statistics
+my.post.match.stats.fn <- function(ttl, my.p, my.h, my.m) {
+	
+  istat <- my.diagnostic.fn(my.p, my.h, my.m)
+	
+  my.h$fasttrack <- my.fasttrack.fmt(my.h$hprioritycode)
+
+	cat(paste0(ttl,' Properties: \n'))
+	print(freq(my.p$pmstat))
+	
+	cat(paste0(ttl,' Households: \n'))
+	print(freq(my.h$hmstat))
+	
+	cat(paste0(ttl,' Households crosstab: \n'))
+	print(ctable(x=my.h$hmstat,y=my.h$hsource))
+	
+	cat(paste0(ttl,' Households crosstab: \n'))
+	print(ctable(x=my.h$hmstat,y=my.h$fasttrack))
+	
+	cat(paste0(ttl,' Matched properties crosstab: \n'))
+	xx <- my.p %>%  filter(grepl('Matched:',pmstat))
+	print(ctable(x=xx$pmstat,y=xx$psource))
+	
+	cat(paste0(ttl,' Matched households crosstab: \n'))
+	xx <- my.h %>%  filter(grepl('Matched:',hmstat))
+	print(ctable(x=xx$hmstat,y=xx$hsource))
+	
+	cat(paste0(ttl,' Matched households crosstab: \n'))	
+	print(ctable(x=xx$hmstat,y=xx$fasttrack))
+	
+	cat(paste0(ttl,' Match crosstab: \n'))	
+	print(ctable(x=my.m$Recommend,y=my.m$psource))
+	
+	cat(paste0(ttl,' Match crosstab: \n'))	
+	print(ctable(x=my.m$Recommend,y=my.m$hsource))
+	
+	return(0)
+}
+################################################################################
+# Function to determine framework for the cost function
+# Precalculates a bunch of things so that experimentation with different 
+# options for the cost function can be done quickly.Also helps with debugging.
+#
+my.diff.fn <- function(h,p,o,costopt){
+  
+  ##############################################################################
+  # Setup. 
+  
+  n.p <- nrow(p)
+  n.h <- nrow(h)
+  
+  ##############################################################################
+  # 1. Setup:  a dataframe of differences containing every 
+  # combination of (pid,hid). Extra columns will be added in subsequent steps
+
+  diffs <- h %>% full_join(p,by=character()) 
+  	
+  ##############################################################################
+  # 2. Now  the differences in beds
+  	
+  if(str_detect(costopt,fixed("Beds"))){ 
+  	
+    diffs <- diffs %>% mutate(dbeds = pbeds - hbeds)
+    
+  }
+  
+  ##############################################################################
+  # 3. DMOD differences. 
+  
+  if(str_detect(costopt,fixed("Dmods"))){
+  	
+  	  diffs <- diffs %>% mutate(ddmod_score = pdmod_score - hdmod_score)
+  	  
+  }
+  ##############################################################################
+  # 4. Adjustments for previous offers. A nightmare of bad data. Multiple
+  # offers of the same kind can be made to the same client on the same property
+  # even when the offer has been declined a few days before. Muppets.
+  # We just take the most recent offer for each (pid,hid) combo
+  
+  if(str_detect(costopt,fixed("Offers"))){
+    
+	  if(nrow(o) > 0) {
+	  	
+		  ofr           <- o %>% group_by(pid,hid) %>% 
+		  	                     arrange(desc(ostdt)) %>% 
+		  	                     filter(row_number()==1) %>% 
+		  	                     ungroup() %>% 
+		  	                     select(-pid2,-pzone,-hid2,-hzone,-oid,-ostdt,-ostdesc) 
+		  
+		  diffs         <- diffs  %>% left_join(ofr,by=c("pid"="pid","hid"="hid")) %>% 
+		                              mutate(ostcode = ifelse(is.na(ostcode),"N/A",ostcode))
+		  
+		  diffs         <- diffs %>%  left_join(cost.lookup.offers,by=c("ostcode"="ostcode"))    
+		  
+	  } else {
+	  	
+	  	diffs <- diffs %>%  mutate(ostcode="N/A",
+	  		                         cost.multiplier = 1.0,
+	  		                         cost.delta = 0.0)
+	  	
+	  }
+  }	
+  ##############################################################################
+  # 5. Nothing to do here for alerts
+  #
+  # if(str_detect(costopt,fixed("Alerts"))){
+  # 	
+  # 	diffs <- diffs %>%  mutate(blah = blah)
+  # 
+  # }
+  	
+  ##############################################################################
+  # 6. Nothing to do here for lat/lon imputation
+  #
+  # if(str_detect(costopt,fixed("LLimp"))){
+  # 	
+  # 	diffs <- diffs %>%  mutate(blah = blah)
+  # 
+  # }
+  	
+  ##############################################################################
+  # 7. Nothing to do here for household priority
+  #
+  # if(str_detect(costopt,fixed("Hpriority"))){
+  # 	
+  # 	diffs <- diffs %>%  mutate(blah = blah)
+  # 
+  # }
+  	
+  ##############################################################################
+  # 8. Distance between household & property. Various combinations of
+  #    in-zone and in-preferred zone to deal with.
+
+  if(str_detect(costopt,fixed("Distance"))){
+  	
+	  my.p.in.hzone      <- ifelse(diffs$pzone == diffs$hzone,TRUE,FALSE)
+	  my.p.in.hzoneprefs <- ifelse(str_detect(diffs$hzoneprefs,fixed(diffs$pzone)),TRUE,FALSE)
+	  
+	  diffs <- diffs %>% mutate(distkm          = my.distkm.fn(plat,plon,hlat,hlon),
+	  	                        ldistkm         = log10(1.0 + distkm),
+	  	                        p.in.hzone		  = my.p.in.hzone,
+	                            p.in.hzoneprefs = my.p.in.hzoneprefs)
+	  
+	  rm(my.p.in.hzone,my.p.in.hzoneprefs)
+  }
+
+  
+  ##############################################################################
+  # Final check. This error will royally screw up the matches
+  if(nrow(diffs) != n.p * n.h){
+  	stop('ERROR! Diffs wrong size!')
+  }
+  
+  ##############################################################################
+  # And finished
+  return(diffs)
+}
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# Generates dataframe of costs from the table of differences
+my.cost.fn <- function(h,p,o,costopt){
+
+  ##############################################################################
+  # 1. Setup: placeholder
+	diffs <- my.diff.fn(h,p,o,costopt)
+	
+  costs <- diffs %>%  mutate(cost = 0.0)
+  
+  ##############################################################################
+  # 2. Cost contribution from mismatch in beds 
+  
+  if(str_detect(costopt,fixed("Beds"))){ 
+  	
+    cat("Costs: contribution from mismatch in beds\n")
+  	
+    costs <- costs %>% mutate(cost = cost + cost.weight.beds  * dbeds^2)
+    
+  }
+  
+  ##############################################################################
+  # 3. Now the cost contribution from dmod mismatches
+  
+  if(str_detect(costopt,fixed("Dmods"))){
+  	
+    cat("Costs: contribution from DMOD mismatch\n")   
+  	
+    costs <- costs %>% mutate(cost = cost + cost.weight.dmod * ddmod_score^2) 
+    
+  }
+  
+  ##############################################################################
+  # 4. Adjustments for previous offers
+  
+  if(str_detect(costopt,fixed("Offers"))){
+  	
+    cat("Costs: adjusted for previous offers\n")  
+  	
+    costs <-  costs %>% mutate(cost = ifelse(!is.na(cost.multiplier) & 
+                                             !is.na(cost.delta),
+                                             cost*cost.multiplier + cost.delta,
+                                             cost))
+    
+  }
+  
+  ##############################################################################
+  # 5. Adjustments for  alerts
+  
+  if(str_detect(costopt,fixed("Alerts"))){
+  	
+    cat("Costs: adjusted for household/property alerts\n")  
+  	
+    costs <-  costs %>% mutate(cost = ifelse(halert>0,cost+cost.weight.halert*halert^2,cost),
+    	                         cost = ifelse(palert>0,cost+cost.weight.palert*palert^2,cost))
+
+  }
+  
+  ##############################################################################
+  # 6. Adjustments for lat/lon imputation
+  
+  if(str_detect(costopt,fixed("LLimp"))){
+  	
+    cat("Costs: adjusted for Lat/Lon imputation\n")  
+  	
+    costs <-  costs %>% mutate(cost = ifelse(hlatlon.imputed=='Y' | platlon.imputed=='Y',
+    	                                       cost+cost.delta.latlon.imputation,cost))
+
+  }
+  ##############################################################################
+  # 7. Cost contribution from household priority
+  
+  if(str_detect(costopt,fixed("Hpriority"))){
+  
+  	costs <- costs %>% mutate(cost = cost + cost.weight.hpriority * hpriority^2)
+  	
+  }
+  ##############################################################################
+  # 8. Now the contribution from distance with or without the correction
+  # for preferred suburbs: If the property is not in the household zone 
+  # but is in a preferred zone, cap the distance at 5km
+
+  if(str_detect(costopt,fixed("Distance"))){
+  	
+  	  if(zonepref.correction) {
+      cat("Costs: contribution from location mismatch with preferred zone correction\n")
+      
+      costs <- costs %>% mutate(ldistkm = ifelse(p.in.hzoneprefs & !p.in.hzone,
+      	                                        cost.weight.ldistkm.pz.a + 
+      		                                      cost.weight.ldistkm.pz.b*ldistkm,
+      	                                        ldistkm),
+      	                        cost = cost + 
+      		cost.weight.ldistkm  * ldistkm^2 * (1 + cost.weight.ldistkm.hbeds * (hbeds-1)^2))
+      
+    } else {
+    	
+      cat("Costs: contribution from location mismatch with no preferred zone correction\n")   
+    	costs <- costs %>%  mutate(cost = cost + 
+    			     cost.weight.ldistkm  * ldistkm^2 * (1 + cost.weight.ldistkm.hbeds * (hbeds-1)^2))
+    	
+    }
+  	
+  }
+  ##############################################################################
+  # 9. Set bad values for really dumb matches
+  	
+	costs <- costs %>% mutate(cost = ifelse((!p.in.hzone    & !p.in.hzoneprefs) |
+	  		                                  (hzoneprefs!="" & !p.in.hzoneprefs),
+	  		                                  cost+cost.cutoff3,
+	  		                                  cost))
+  
+  ##############################################################################
+  # 10. Cleanup
+  
+  cat("Costs: final formatting\n")  
+  costs <- costs %>% select(hid,hid2,pid,pid2,cost,distkm,ldistkm,
+                             hbeds,hdmod_score,hpriority,hprioritycode,
+  	                               hzone,hzone.imputed,hzoneprefs,
+  	                               haddress,hsource,halert,htype,
+                             pbeds,pdmod_score,ppriority,pzone,pzone.imputed,
+  	                               paddress,psource,palert,ptype) %>%
+                     mutate(cost      = round(cost,2),
+                     	      distkm    = round(distkm,2),
+                     	      ppriority = round(ppriority,2),
+                     	      hpriority = round(hpriority,2)) %>%
+                     arrange(pid,hid)
+  
+  ##############################################################################
+  # 11. Final check
+  if(nrow(costs) != nrow(diffs)){
+  	stop('ERROR! Costs wrong size!')
+  }
+ 
+  ##############################################################################
+  # 12. And finished
+  rm(diffs)
+	gc()
+  return(costs)  
+}
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# Post-process matches
+my.recommend.fn <- function(mm){
+		zz <- mm %>% mutate(Recommend = case_when(cost < cost.cutoff1 & offerpriority < offpri.cutoff1 ~ recommend.str1,
+ 	 	                                          cost < cost.cutoff2                                  ~ recommend.str2,
+ 	 	                                    	    cost < cost.cutoff3                                  ~ recommend.str3,
+			                                        TRUE                                                 ~ recommend.str4)) %>% 
+			           select(hid,hid2,pid,pid2,Recommend,cost,offerpriority, distkm,
+														hbeds,	hdmod_score,	hpriority,	hprioritycode, 
+			           	                  hzone, hzoneprefs, haddress, halert, htype, hsource,
+			                      pbeds,	pdmod_score,	ppriority,	
+			           	                  pzone, paddress, palert, ptype, psource,
+			                      zonechange,	mtyp)
+		return(zz)
+}
+################################################################################
+# Simple wrapper
+my.match.fn <- function(costs,matchoption){
+  if(matchoption == "Easiest first"){
+    mm <- my.match.fn2(costs)
+  } else if(matchoption == "Optimal"){
+    mm <- my.match.fn1(costs)
+  } else {
+    cat("ERROR- Match option not found\n")
+    stop()
+  }
+	mm <- my.recommend.fn(mm) 
+  return(mm)
+}
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# Generates match from costs associated with pool of properties and households
+# Everything required is in the input array.
+# Assume number of households is >= number of properties
+my.match.fn1 <- function(costs){
+    
+  cat("Optimal match using Hungarian algorithm\n")   
+  
+  # Costs dataframe  must be sorted to vary by properties then households
+  costs <- costs %>% arrange(pid,hid)
+
+  hids <- unique(costs$hid)
+  pids <- unique(costs$pid)
+  n.hh <- length(hids)
+  n.pp <- length(pids)
+  cost.array <- array(costs$cost,dim=c(n.hh,n.pp))
+
+  match.array <- HungarianSolver(cost.array)
+    
+  # Unpick to create data framewith cost etc. Must remove no match pairs
+  mp <- data.frame(hidid=match.array$pairs[,1],
+                   pidid=match.array$pairs[,2]) %>% 
+        filter(!pidid == 0)   %>% 
+        mutate(hid=hids[hidid],
+               pid=pids[pidid]) %>% 
+        inner_join(costs,by=c("hid"="hid","pid"="pid")) %>% 
+        select(-pidid,-hidid) %>% 
+        arrange(cost,hid,pid) 
+  
+  # Final bits
+  mp <- mp %>% mutate(offerpriority = round(ppriority * hpriority,2),
+                      zonechange = ifelse(hzone != pzone,1,0),
+                      mtyp = "Optimal") 
+  
+  return(mp)
+}
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# As above, but just picks the easiest first. Fastest implementation I could find
+# using data.table subset operation, but it is still pretty slow. 
+# Really need C or C++ :-)
+# And assumes number of households >= number of properties
+my.match.fn2 <- function(costs){
+  
+  cat("Easiest-first match using a rather slow home-grown algorithm :-)\n")   
+  
+  hids <- unique(costs$hid)
+  pids <- unique(costs$pid)
+  n.hh <- length(hids)
+  n.pp <- length(pids)
+  my.costs <- costs %>% select(pid,hid,cost)
+  found <- data.frame(pid=rep("PP",n.pp),
+                      hid=rep("hh",n.pp),
+                      cost=rep(-1,n.pp))
+  
+  
+  # Assumes num households >= num properties
+  for (i in 1:n.pp){
+    xx <- my.costs %>% arrange(cost) %>% filter(row_number()==1)
+    found[i,] <- xx
+    my.costs <- subset(subset(my.costs,pid != xx$pid),hid != xx$hid) 
+  }
+  # Put all cost info back in
+  found <- found %>% select(-cost) %>% left_join(costs,by=c("pid"="pid","hid"="hid"))
+  
+  # Final bits
+  mp <- found %>% mutate(offerpriority = ppriority * hpriority,
+                         zonechange = ifelse(hzone != pzone,1,0),
+                      mtyp = "EasiestFirst")
+  
+  return(mp)
+}
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# Function to calculate the approximate distance in km between 2 (lat,lon) pairs
+# Assumes spherical planet. Based on the FORTRAN version from 1988 :-)
+# Darned trig functions are pretty slow in R :-(
+my.distkm.fn <- function(lat1,lon1,lat2,lon2){
+  
+  dgtord <- 3.1415926/180.0 # Degrees to radians conversion
+  aradkm <- 6367.0          # Radius of the Earth km
+  dlat   <- lat2-lat1
+  dlon   <- lon2-lon1
+  t2     <- sin(dlon*dgtord*0.5)**2
+  t2     <- t2*cos(lat1*dgtord)*cos(lat2*dgtord)
+  t2     <- t2 + sin(dlat*dgtord*0.5)**2
+  t1     <- 1.0-t2
+  distkm <- atan2(sqrt(t2),sqrt(t1))*2.0*aradkm
+  return(distkm)
+}
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+# Diagnostic output
+my.diagnostic.fn <- function(pp,hh,mm){
+  
+  cat("--- Match diagnostics ---\n")
+  pids.matched <- unique(sort(mm$pid))
+  hids.matched <- unique(sort(mm$hid))
+  ppm <- pp %>%  filter( pid %in% pids.matched)   # Matched properties
+  ppu <- pp %>%  filter(!pid %in% pids.matched)		# Unmatched properties
+  hhm <- hh %>%  filter( hid %in% hids.matched)		# Matched households
+  hhu <- hh %>%  filter(!hid %in% hids.matched)		# Unmatched households
+  
+  # Diagnostics on properties in batch
+  npp  <- nrow(pp)
+  nppm <- nrow(ppm)
+  nppu <- nrow(ppu)
+  cat(paste0("Total properties: ",npp," Matched: ",nppm," Unmatched: ",nppu,"\n"))
+  
+  # Households in batch
+  nhh  <- nrow(hh)
+  nhhm <- nrow(hhm)
+  nhhu <- nrow(hhu)
+  cat(paste0("Total households: ",nhh," Matched: ",nhhm," Unmatched: ",nhhu,"\n"))
+  
+  # Matches found
+  nmm <- nrow(mm)
+  cat(paste0("Matches: ",nmm," Total cost: ",sum(mm$cost))," Max cost: ",max(mm$cost),"\n")
+  qq <-quantile(mm$cost,probs=seq(0.0,1.0,0.1))
+  qqstr <- paste0(round(qq,2),collapse=" ")
+  cat(paste0("Match cost deciles: ",qqstr,"\n"))
+  
+  # Properties not matched
+  if(nppu > 0){
+    
+    # Determine number of unmatched beds/dmods
+    nppu.beds  <- sum(ppu$pbeds)
+    nppu.dmods <- sum(ppu$pdmod_score)
+   
+    cat(paste0("Unmatched properties: ",nppu," Unused beds: ",nppu.beds,"Unused dmods: ",nppu.dmods,"\n"))
+  } else {
+    cat(paste0("No unmatched properties\n"))
+  }
+  
+  # Households not matched
+  if(nhhu > 0){
+    # Determine number of unmatched beds/attributes
+    nhhu.beds  <- sum(hhu$hbeds)
+    nhhu.dmods <- sum(hhu$count)
+    
+    cat(paste0("Unmatched households: ",nhhu," Unmatched beds: ",nhhu.beds," Unmatched dmods: ",nhhu.dmods,"\n"))
+  } else {
+    cat(paste0("No unmatched households\n"))
+  }
+  
+  
+  # Recommendations 
+  nn<-nrow(mm)
+  xx <- table(mm$Recommend)
+  yy <- paste0(names(xx),collapse=", ")
+  cat(paste0("Recommendations: ",yy,"\n"))
+  zz <- paste0(xx,collapse=", ")
+  cat(paste0("Counts: ",zz,"\n"))
+  xx <- round(100.0 * xx/nn,2)
+  zz <- paste0(xx,collapse=", ")
+  cat(paste0("Percentages %: ",zz,"\n"))
+
+  return(0)
+}
+################################################################################
+# val can be a single value or a vector of values.
+# Convert to a regexp to deal with the various options
+my.rowcount.fn <- function(desc,path,my.var,my.vals){
+	
+	my.regex <- paste0('(',paste0(my.vals,collapse="|"),')')
+
+	cat(paste0('------ ',desc,' ----- \n'))
+	tmp <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+  cat(paste0('\tRows NZ: ',nrow(tmp),'\n'))
+
+  tmp <- tmp %>% mutate(my.test = {{my.var}}) %>% 
+  	             filter(str_detect(my.test,my.regex))
+  cat(paste0('\tRows ',paste0(my.vals,collapse="|"),': ',nrow(tmp),'\n'))
+  
+  return(0)
+}
+################################################################################
+my.rowcount.msd.fn <- function(){
+		tmp <- fread(raw.households.mw,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+			        group_by(raw.rpt_transfer_register_status) %>% 
+			        summarise(nn=n()) %>% 
+			        ungroup()
+		cat('------ MSD Waitlist :\n')
+		for(i in 1:nrow(tmp)){
+			cat(paste0("\t",tmp[i,1],"\t",tmp[i,2],"\n"))
+		}
+		return(0)
+}
+
+################################################################################
+# my.zones can be a scalar string or a vector of strings
+my.rowcounts.extract.fn <- function(my.zones){
+
+	istat <- my.rowcount.fn('Properties/voids extract',raw.properties.vd,raw.curr_manager_hws_desc,my.zones)
+	
+	istat <- my.rowcount.fn('Applications extract',raw.households.ba,raw.curr_manager_hws_desc,my.zones)
+	
+	istat <- my.rowcount.fn('MSD waitlist extract',raw.households.mw,raw.zone,my.zones)
+	istat <- my.rowcount.msd.fn()
+	
+	istat <- my.rowcount.fn('Current offers extract',raw.offers.co,raw.curr_manager_hws_desc,my.zones)
+	
+	istat <- my.rowcount.fn('Withdrawn/declined offers extract',raw.offers.wd,raw.curr_manager_hws_desc,my.zones)
+
+	#istat <- my.rowcount.fn('Exclusions extract',raw.exclusions,raw.curr_manager_hws_desc,my.zone)
+	
+	return(0)
+	
+}
+################################################################################
+# Generates a table reporting on extracts
+my.extract.report.fn <- function(my.zones){
+
+	  nn <- 7
+	  
+	  vars     <- rep("",nn)
+	  srcs     <- rep("",nn)
+	  totnz    <- rep(0,nn)
+	  zones    <- rep(paste0(my.zones,collapse="|"),nn)
+	  totzone  <- rep(0,nn)
+	  
+	  
+	  i          <- 1
+	 	vars[i]    <- "Properties/voids"
+	  path       <- raw.properties.vd
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- nrow(tmp %>%  filter(raw.curr_manager_hws_desc %in% my.zones))
+	  srcs[i]    <- "IDP 2.5.1 Placement Operational Reports | Daily Allocation"
+
+	  i          <- 2
+	 	vars[i]    <- "Properties/pipeline"
+	  path       <- raw.properties.pl
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- nrow(tmp %>%  filter(raw.zone %in% my.zones))
+	  srcs[i]    <- "IDP 5.0.1 | Pipeline Delivery | Pipeline Summary"
+	  
+	  
+	  
+	  i          <- 3
+	  vars[i]    <- "BIT Applications"
+	  path       <- raw.households.ba
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- nrow(tmp %>%  filter(raw.curr_manager_hws_desc %in% my.zones))
+	  srcs[i]    <- "IDP 2.5.3 Customer Liaison Toolkit | Applications | Application Summary"
+	  
+	  
+	  i          <- 4
+	  vars[i]    <- "MSD Waitlist"
+	  path       <- raw.households.mw
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- nrow(tmp %>%  filter(raw.zone %in% my.zones))	
+	  srcs[i]    <- "IDP 2.0.4 Social Housing Demand | Application Waitlist | Waitlist Overview"
+	  
+	  
+	  i          <- 5
+	  vars[i]    <- "Current Open Offers"
+	  path       <- raw.offers.co
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- nrow(tmp %>%  filter(raw.curr_manager_hws_desc %in% my.zones))	
+	  srcs[i]    <- "IDP 2.5.2 Placement Monitoring Reports | Offers | Open Offers"
+	  
+	  
+	  i          <- 6
+	  vars[i]    <- "Recent Withdrawn/Declined Offers"
+	  path       <- raw.offers.wd
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- nrow(tmp %>%  filter(raw.curr_manager_hws_desc %in% my.zones))	
+	  srcs[i]    <- "IDP 2.5.2 Placement Monitoring Reports | Offers | Withdrawn/Declined Summary"
+
+	  
+	  i          <- 7
+	  vars[i]    <- "Exclusions"
+	  path       <- raw.exclusions
+	  tmp        <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) 
+	  totnz[i]   <- nrow(tmp)
+	  totzone[i] <- NaN  #nrow(tmp %>%  filter(raw.curr_manager_hws_desc==my.zone))	
+	  srcs[i]    <- "No IDP Report"
+	  
+  	rpt <- data.frame(Variable     = vars,
+  		                TotalNZ      = totnz,
+  		                TotalZone    = totzone,
+  		  		          Zone         = zones,
+  		                Source       = srcs)
+
+  	
+    return(rpt)
+}
+################################################################################
+# Returns a map of the matches
+ my.map.fn <- function(p,h,m,input.picks){
+    
+ 		# Pre-filter to remove things that break the plot
+ 	 	p <- p %>% filter(!pmstat %in% c(mstat.const.sampled.out,mstat.const.nolatlonzone))
+ 	  h <- h %>% filter(!hmstat %in% c(mstat.const.sampled.out,mstat.const.nolatlonzone))
+ 	  m <- m %>% filter(hid %in% h$hid & pid %in% p$pid)
+ 	
+    # Final frame for plotting the map. Merge in lats and longs
+    # NB In general number of matches != number of properties/households
+    px <- p %>% select(pid,plat,plon)
+    hx <- h %>% select(hid,hlat,hlon)
+		
+    mx <- m %>% filter(Recommend %in% input.picks) %>% 
+    									left_join(px,by=c("pid"="pid")) %>% 
+		                  left_join(hx,by=c("hid"="hid")) 
+
+    # Create the popup text for the symbols
+    ppopup <- paste0("Property id1: ",p$pid,
+    								 "<br>Property id2: ",p$pid2,
+                     "<br>Beds: ",p$pbeds,
+    	               "<br>Dmod score: ",p$pdmod_score,
+    	               "<br>Priority:",round(p$ppriority,4),
+    	    	    	   "<br>Alert: ",p$palert,
+    	               "<br>Type: ",p$ptype,
+    	    	         "<br>Source:",p$psource,
+    	               "<br>Address:",p$paddress,
+    	               "<br>Zone: ",p$pzone)
+    hpopup <- paste0("Household id1: ",h$hid,
+    	               "<br>Household id2: ",h$hid2,
+                     "<br>Beds: ",h$hbeds,
+                     "<br>Dmod score: ",h$hdmod_score,
+                     "<br>Priority:",round(h$hpriority,4),
+    	               "<br>Priority code:",h$hprioritycode,
+    	    	         "<br>Alert: ",h$halert,
+    	               "<br>Type: ",h$htype,
+    	    	         "<br>Source:",h$hsource,
+    	    	    	   "<br>Address:",h$haddress,
+    	               "<br>Zone: ",h$hzone,
+    	               "<br>Zone preferences: ",h$hzoneprefs)
+
+    # Colours: Households: Red if BIT, Yellowif MSD
+    #          Properties: Blue if Void, Green if Pipeline
+		h <- h %>% mutate(hcol = case_when(hsource == hsource.const.bit.str      ~ "#FF0000",
+											  	    	       hsource == hsource.const.msd.str      ~ "#FFFF00",
+											  	     	                                         TRUE ~ "#000000"))
+		p <- p %>% mutate(pcol = case_when(psource == psource.const.void.str      ~ "#0000FF",
+											  	    	       psource == psource.const.pipe.str      ~ "#00FF00",
+											  	     	                                         TRUE ~ "#000000"))
+    
+    # Draw a map with symbols. Radius is in Meters.
+    radiusm <- 15.0
+    plat.mean <- mean(p$plat)
+    plon.mean <- mean(p$plon)
+
+    my.map <- leaflet() %>% addTiles() %>%
+                  setView(lat=plat.mean,
+                          lng=plon.mean,
+                          zoom=12) %>% 
+                  addCircles(radius=radiusm,lng=p$plon,lat=p$plat,
+                             color=p$pcol,opacity=1.0,fill=TRUE,fillColor=p$pcol,fillOpacity=1.0,
+                             popup=ppopup) %>% 
+                  addCircles(radius=radiusm,lng=h$hlon,lat=h$hlat,
+                             color=h$hcol,opacity=1.0,fill=TRUE,fillColor=h$hcol,fillOpacity=1.0,
+                             popup=hpopup)  %>%  
+                  addFlows(lng0=mx$hlon,lat0=mx$hlat,
+                           lng1=mx$plon,lat1=mx$plat,
+                           color="#000000",minThickness=1,
+                           maxThickness=2,flow=1.0,
+                           opacity=0.5)
+    
+    return(my.map)
+ }
+################################################################################
+# Fn to load pbi timeslice 
+#
+my.load.pbi.timeslice.fn <- function(lfirst,exdt,p,h,o,m,ex,z){
+	
+	if(lfirst) {
+		
+		cat(paste0('First load of timeslice(s): ',paste0(exdt,collapse=','),'\n'))
+		fwrite(p,file=pbi.properties,sep=',',append=FALSE,col.names=TRUE)  
+		fwrite(h,file=pbi.households,sep=',',append=FALSE,col.names=TRUE)  
+		fwrite(o,file=pbi.offers,sep=',',append=FALSE,col.names=TRUE)  
+		fwrite(m,file=pbi.matches,sep=',',append=FALSE,col.names=TRUE)  
+		fwrite(ex,file=pbi.extracts,sep=',',append=FALSE,col.names=TRUE)  
+		fwrite(z,file=pbi.zones,sep=',',append=FALSE,col.names=TRUE)  
+		
+	} else {
+		
+		cat(paste0('Adding timeslice(s): ',paste0(exdt,collapse=','),'\n'))
+		fwrite(p,file=pbi.properties,sep=',',append=TRUE,col.names=FALSE)  
+		fwrite(h,file=pbi.households,sep=',',append=TRUE,col.names=FALSE)  
+		fwrite(o,file=pbi.offers,sep=',',append=TRUE,col.names=FALSE)  
+		fwrite(m,file=pbi.matches,sep=',',append=TRUE,col.names=FALSE)  
+		fwrite(ex,file=pbi.extracts,sep=',',append=TRUE,col.names=FALSE)  
+		#fwrite(zones,file=pbi.zones,sep=',',append=TRUE,col.names=FALSE) 
+	
+	}
+	return(0)
+}
+################################################################################
+# Fn to remove pbi timeslice
+#
+my.remove.pbi.timeslice.fn <- function(exdt){
+	
+	istat <- my.remove.pbi.timeslice.from.1.table.fn(exdt,pbi.properties)
+	istat <- my.remove.pbi.timeslice.from.1.table.fn(exdt,pbi.households)
+	istat <- my.remove.pbi.timeslice.from.1.table.fn(exdt,pbi.offers)
+	istat <- my.remove.pbi.timeslice.from.1.table.fn(exdt,pbi.matches)
+	istat <- my.remove.pbi.timeslice.from.1.table.fn(exdt,pbi.extracts)
+	return(0)
+}
+################################################################################
+# Fn to remove timeslice from 1 pbi file
+#
+my.remove.pbi.timeslice.from.1.table.fn <- function(exdt,path){
+
+	cat(paste0('Removing timeslice(s): ',paste0(exdt,collapse=','),' from file ',path,'\n'))
+	
+	# Read data and remove specified slice
+	xx <- fread(path,header=TRUE,sep=",",stringsAsFactors = FALSE) %>% 
+		        filter(!extract_dt %in% exdt)
+
+	# Rewrite data
+	fwrite(xx,file=path,sep=',',append=FALSE,col.names=TRUE) 
+	
+	return(0)
+}
+################################################################################
+Enter file contents here
