@@ -1,22 +1,40 @@
+import re
+
 ################################################################################
 # Strips commas and unnecessary spaces form text fields
 #
-my.strip.fn <- function(x){
-  yy <- str_trim(gsub("\\s+"," ",gsub('"','',gsub(","," ",x))))
-  return (yy)
-}
+#my.strip.fn <- function(x){
+#  yy <- str_trim(gsub("\\s+"," ",gsub('"','',gsub(","," ",x))))
+#  return (yy)
+#}
+
+def my_strip_fn(x):
+    yy = re.sub(r'\s+', ' ', re.sub(r'"|,', ' ', x)).strip()
+    return yy
+
 ################################################################################
 # Puts lookups into global variables
 #
-my.lookups.load.fn <- function(conn){
+#my.lookups.load.fn <- function(conn){
 	
-	lookup.cs2z  <<- my.lookup.cs2z.fn(conn)
-	lookup.pc2z  <<- my.lookup.pc2z.fn(conn)
-	lookup.pc2ll <<- my.lookup.pc2ll.fn(conn)
-	lookup.lc2z  <<- my.lookup.lc2z.fn(conn)
+#	lookup.cs2z  <<- my.lookup.cs2z.fn(conn)
+#	lookup.pc2z  <<- my.lookup.pc2z.fn(conn)
+#	lookup.pc2ll <<- my.lookup.pc2ll.fn(conn)
+#	lookup.lc2z  <<- my.lookup.lc2z.fn(conn)
 	
-	return(0)
-}
+#	return(0)
+#}
+
+def my_lookups_load_fn(conn):
+    global lookup_cs2z, lookup_pc2z, lookup_pc2ll, lookup_lc2z
+    
+    lookup_cs2z = my_lookup_cs2z_fn(conn)
+    lookup_pc2z = my_lookup_pc2z_fn(conn)
+    lookup_pc2ll = my_lookup_pc2ll_fn(conn)
+    lookup_lc2z = my_lookup_lc2z_fn(conn)
+    
+    return 0
+
 ################################################################################
 # Returns a lookup city/suburb to zone for imputation
 #
