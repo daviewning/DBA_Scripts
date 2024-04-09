@@ -1,36 +1,4 @@
 ################################################################################
-################################################################################
-################################################################################
-################################################################################
-# Library functions
-# 2023       KM Various hacks prior to testing with the Waikato team
-# 2023-12-07 KM Added small correction to distance term in cost function
-# 2023-12-21 KM Re-introduced Zone preferences option from app_v02
-# 2024-01-17 KM Added extract functions to simplify top-level scripts
-# 2024-01-23 KM Added counts of MSD Waitlist
-# 2024-02-09 KM More cleaning functions
-# 2024-02-14 KM Added LARs (letting areas) to bit-list extract
-# 2024-02-16 KM Changed subset functions to use vector of zones rather than scalar
-# 2024-02-27 KM Added pipeline extract. Refactored lookups into functions
-# 2024-02-29 KM Added map function. Moved dummy data to Dunedin.
-# 2024-03-01 KM Tuning h/p risk scores and weights
-# 2024-03-01 KM Fix in logic for preferred zones
-# 2024-03-07 KM Simpler logic for property priority
-# 2024-03-09 KM Days waiting for households
-# 2024-03-14 KM Added alert_code
-# 2024-03-14 KM Standardising preferred zone logic
-# 2024-03-21 KM Added palert for dodgy data eg from HDS.
-# 2024-03-22 KM Added fns to load/delete pbi slices
-# 2024-03-27 KM Added ptype and reformatted paddress/haddress for sorting/grouping
-# 2024-04-05 KM Bugfix in processing offers
-# 2024-04-08 KM Removing unused functions. all functions now return value
-################################################################################
-################################################################################
-####### Functions for extraction ###############################################
-################################################################################
-################################################################################
-
-################################################################################
 # Strips commas and unnecessary spaces form text fields
 #
 my.strip.fn <- function(x){
