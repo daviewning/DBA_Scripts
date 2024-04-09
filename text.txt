@@ -1,228 +1,175 @@
-The delay you're experiencing when running your UDF in Snowflake, which takes 45 minutes for logs to show up in the my_event table, could be attributed to several factors related to the nature of Python UDFs in Snowflake and the specific operations you're performing within your UDF. Here are some potential reasons and considerations:
+# Config file for the placement app.
+# 
+# 2023-10-09 KM Initial version for real data
+# 2023-12-04 KM Add more structure to data directory to avoid being overwhelmed
+# 2023-12-07 KM Added small correction to distance term in cost function
 
-Performance with Single Row Prediction: Your UDF is likely performing single-row predictions, which can be slow, especially with data science frameworks like spaCy. To improve performance, consider converting the input dataset into Snowflake arrays and feeding the arrays into the prediction code. This can be done using tabular Python UDTFs, the ARRAY_AGG function, or vectorized Python UDFs, which are optimized for batch processing.
-Cold Warehouse Startup: If the warehouse was suspended and then resumed, there might be an additional latency of approximately 30 seconds due to the need to reinstall Anaconda packages on-demand. This is because newly provisioned virtual warehouses do not preinstall Anaconda packages, and they are installed on-demand the first time a UDF is used.
-Unzipping and Loading Models: Your UDF involves unzipping and loading models from ZIP files. This process, especially if it's done for the first time or after a warehouse restart, can add significant overhead. The use of file locks to ensure synchronized access to the /tmp directory and the extraction process itself can contribute to the delay. Additionally, loading models from extracted files can be time-consuming, especially if the models are large or complex 5.
-Data Processing Overhead: The operations performed within your UDF, such as processing text with spaCy and extracting entities, can be computationally intensive, especially if the input data is large. This can lead to increased processing time, especially if the UDF is not optimized for batch processing or if the warehouse resources are not sufficient to handle the load efficiently.
-Network and File Access: While not directly mentioned in your UDF code, it's worth noting that Python UDFs in Snowflake have limitations regarding network access and writing to files due to security constraints. This means that any operations that rely on downloading additional data or writing to files might not work as expected and could potentially contribute to delays if not handled correctly.
+options(java.parameters="-Xmx4g")
 
-To address these issues, consider the following optimizations:
-
-Batch Processing: Modify your UDF to process data in batches instead of single rows. This can significantly improve performance by leveraging vectorized operations and reducing the overhead associated with processing each row individually.
-Optimize Warehouse Size and Type: Ensure that your warehouse is appropriately sized and configured for the workload. For tasks involving large datasets or complex computations, a larger warehouse size or a warehouse optimized for compute-intensive tasks might be necessary.
-Preload Models: If possible, preload models outside of the UDF to avoid the overhead of unzipping and loading them each time the UDF is called. This might involve using a different approach or tool for model deployment that is more suited to Snowflake's environment.
-Review and Optimize Code: Review your UDF code for any potential optimizations, such as reducing the complexity of operations, minimizing the use of external libraries, or simplifying the data processing logic
-
-
-
-
-Transform Your Data:
-Utilize the Snowpark DataFrame API for data preparation, including text representation and feature engineering. This step is crucial for making your data ready for training 2.
-Train Your Model:
-Train your NLP model using a stored procedure inside Snowflake. This involves leveraging Python libraries and the Snowpark framework to fit your model to the data 2.
-For example, you can define a training function that prepares the data, creates a text representation matrix, fits the model, and saves it 2.
-Deploy Your Model:
-Deploy your trained model using a User-Defined Function (UDF) in Snowflake. This allows you to integrate your model directly into SQL queries for real-time predictions 2.
-Inference and Monitoring:
-Use the deployed model for inference by calling the UDF function in your SQL queries. Monitor the performance and accuracy of your model using Snowflake's Query Profile and Query History 1.
-Snowpark allows for efficient distribution of prediction functions across rows, enabling scalable and performant ML workflows 1.
-Application Development with Streamlit:
-Develop applications to interact with your NLP model using Streamlit. This can include making predictions, monitoring your ML model, and creating applications for business teams 1.
-Best Practices:
-Use stored procedures to push Python code into Snowflake for processing, which is more efficient than client-side processing.
-Cache the training dataset using df.cache_result() to minimize I/O operations.
-Cache model files when loading them in UDF functions to speed up predictions 1.
-By following these steps, you can effectively save your NLP study into Snowflake, process it using Snowpark for Python, and develop applications with Streamlit. This approach allows you to leverage Snowflake's scalability and security while maintaining the flexibility and power of Python for NLP and ML tasks.
+# Libraries
+library(tidyverse)
+library(data.table)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(lubridate)
+library(summarytools)
+library(janitor)
+library(DataExplorer)
+library(readr)
+library(scales)
+library(leaflet)
+library(leaflet.minicharts)
 
 
-https://stackoverflow.com/questions/70793413/how-to-clear-last-run-query-cache-in-snowflake
+# Root directory
+#pfx <- '/media/veracrypt1/Kip/Projects'   # For old-style running on linux
+#pfx <- '/home/rstudio/Projects'            # Running in container 
+#pfx <- 'F:/Kip/Projects'                  # Personal windows and SSD
+pfx <- 'U:/'                              # From ToolServer at KaingaOra
+rtdir <- paste0(pfx,"/31_KaingaOra/DS021_pl_app")
+extryy <- '2024'
+extrmm <- '04'
+extrdd <- '08'
+extrdt <- paste0(extryy,'-',extrmm,'-',extrdd)
+datadir <- paste0('/data/app_v05/',extryy,'/',extrmm,'/',extrdt)
+pbidir  <- paste0('/powerbi/data/app_v05/')
 
-SELECT TO_DATE(start_time) AS date,
- warehouse_name,
- SUM(avg_running) AS sum_running,
- SUM(avg_queued_load) AS sum_queued
-FROM snowflake.account_usage.warehouse_load_history
-WHERE TO_DATE(start_time) >= DATEADD(month,-1,CURRENT_TIMESTAMP())
-GROUP BY 1,2
-HAVING SUM(avg_queued_load) >0;
+# Datasets
+raw.properties.vd    <- paste0(rtdir,datadir,"/pl_app_01_properties_vd.csv")
+raw.properties.pl    <- paste0(rtdir,datadir,"/pl_app_01_properties_pl.csv")
+raw.properties.ot    <- paste0(rtdir,datadir,"/pl_app_01_properties_ot.csv")
 
+raw.households.ba    <- paste0(rtdir,datadir,"/pl_app_01_households_ba.csv")
+raw.households.mw    <- paste0(rtdir,datadir,"/pl_app_01_households_mw.csv")
+raw.households.ot    <- paste0(rtdir,datadir,"/pl_app_01_households_ot.csv")
 
-SELECT *
-FROM "SNOWFLAKE"."ACCOUNT_USAGE"."QUERY_HISTORY"
-WHERE START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-AND START_TIME < CURRENT_TIMESTAMP();
+raw.offers.co        <- paste0(rtdir,datadir,"/pl_app_01_offers_co.csv")
+raw.offers.wd        <- paste0(rtdir,datadir,"/pl_app_01_offers_wd.csv")
 
-https://select.dev/posts/snowflake-warehouse-sizing#1-processing-power
-https://docs.snowflake.com/en/user-guide/warehouses-overview
+raw.exclusions       <- paste0(rtdir,datadir,"/pl_app_01_exclusions.csv")
 
---LIST OF WAREHOUSES AND DAYS WHERE MCW COULD HAVE HELPED
-SELECT TO_DATE(START_TIME) as DATE
-,WAREHOUSE_NAME
-,SUM(AVG_RUNNING) AS SUM_RUNNING
-,SUM(AVG_QUEUED_LOAD) AS SUM_QUEUED
-FROM "SNOWFLAKE"."ACCOUNT_USAGE"."WAREHOUSE_LOAD_HISTORY"
-WHERE TO_DATE(START_TIME) >= DATEADD(month,-1,CURRENT_TIMESTAMP())
-GROUP BY 1,2
-HAVING SUM(AVG_QUEUED_LOAD) >0
-;
+std.properties       <- paste0(rtdir,datadir,"/pl_app_02_properties.csv")
+std.households       <- paste0(rtdir,datadir,"/pl_app_02_households.csv")
+std.offers           <- paste0(rtdir,datadir,"/pl_app_02_offers.csv")
+std.exclusions       <- paste0(rtdir,datadir,"/pl_app_02_exclusions.csv")
 
---LIST OF WAREHOUSES AND QUERIES WHERE A LARGER WAREHOUSE WOULD HAVE HELPED WITH REMOTE SPILLING
-SELECT QUERY_ID
-,USER_NAME
-,WAREHOUSE_NAME
-,WAREHOUSE_SIZE
-,BYTES_SCANNED
-,BYTES_SPILLED_TO_REMOTE_STORAGE
-,BYTES_SPILLED_TO_REMOTE_STORAGE / BYTES_SCANNED AS SPILLING_READ_RATIO
-FROM "SNOWFLAKE"."ACCOUNT_USAGE"."QUERY_HISTORY"
-WHERE BYTES_SPILLED_TO_REMOTE_STORAGE > BYTES_SCANNED * 5  -- Each byte read was spilled 5x on average
-ORDER BY SPILLING_READ_RATIO DESC
-;
+final.properties     <- paste0(rtdir,datadir,"/pl_app_03_properties.csv")
+final.households     <- paste0(rtdir,datadir,"/pl_app_03_households.csv")
+final.matches        <- paste0(rtdir,datadir,"/pl_app_03_matches.csv")
+final.offers         <- paste0(rtdir,datadir,"/pl_app_03_offers.csv")
+final.exclusions     <- paste0(rtdir,datadir,"/pl_app_03_exclusions.csv")
 
-https://quickstarts.snowflake.com/guide/resource_optimization_performance_optimization/index.html?index=..%2F..index#4
+uat.properties       <- paste0(rtdir,datadir,"/uat/pl_app_04_properties.csv")
+uat.households       <- paste0(rtdir,datadir,"/uat/pl_app_04_households.csv")
+uat.offers           <- paste0(rtdir,datadir,"/uat/pl_app_04_offers.csv")
+uat.matches          <- paste0(rtdir,datadir,"/uat/pl_app_04_matches.csv")
+uat.exclusions       <- paste0(rtdir,datadir,"/uat/pl_app_04_exclusions.csv")
 
 
-Azure Machine Learning: This is a central service that supports the entire machine learning lifecycle, from experimentation to deployment. It integrates with MLflow, an open-source platform for managing the machine learning lifecycle, allowing for tracking experiments, packaging code, managing models, serving and deploying models, and registering models. Azure Machine Learning also offers functionalities for managing and versioning models, supporting various machine learning frameworks, and integrating model serving and deployment capabilities 2.
-Infrastructure and Resources: Azure provides recommendations for managing shared analytics and storage infrastructure, including cloud file systems for storing datasets, databases, and big data clusters (e.g., SQL or Spark). This infrastructure supports reproducible analysis and prevents duplication, leading to cost savings and consistency. It also includes tools for provisioning shared resources, tracking them, and allowing secure connections for team members 2.
-Team Data Science Process (TDSP): This is an agile, iterative methodology for delivering predictive analytics solutions and AI applications efficiently. TDSP includes best practices and structures from Microsoft and other industry leaders to help teams implement data science initiatives successfully. It outlines a lifecycle for structuring data science projects, consisting of five major stages that teams perform iteratively 2.
-Tools and Utilities: Azure offers tools to implement the TDSP and lifecycle, aiming to lower the barriers to adoption and increase consistency. It supports the use of open-source tooling as part of the data science pipeline or workflow and promotes responsible AI tools to achieve Microsoft's Responsible AI Standard 2.
-Standardized Project Structure: Azure supports a standardized project structure that includes documentation, project reports, data reports, model reports, and code for data preparation, model development, and operationalization. This structure facilitates efficient project management and collaboration 2.
-These services and tools collectively provide a robust framework for data scientists and teams to conduct data science projects, manage models, and deploy solutions on Azure.
-
-Azure offers a variety of container services to cater to different needs, from simple container hosting to complex orchestration and management. Here's a comprehensive list of Azure's container services:
-
-Azure Container Apps: Designed for building and deploying modern apps and microservices using serverless containers, offering a fully managed Kubernetes-based application platform 12.
-Azure Container Storage: Provides management of persistent volumes for stateful container applications 1.
-Azure Kubernetes Service (AKS): A managed Kubernetes service for deploying and scaling containerized applications, offering advanced and highly customizable orchestration functionality 125.
-Azure Container Registry: A service for building, storing, securing, and replicating container images and artifacts 12.
-Azure Container Instances: Allows launching containers with hypervisor isolation, suitable for running containers in Azure without managing virtual machines 125.
-Azure Red Hat OpenShift: Offers managed Red Hat OpenShift for deploying and scaling containers, providing additional security and observability features 2.
-Azure Functions: A serverless compute service that lets you run event-driven code without having to explicitly provision or manage infrastructure 2.
-Web App for Containers: A feature of Azure App Service for running containerized web apps on Windows and Linux, offering built-in infrastructure maintenance, security patching, scaling, and diagnostic tooling 24.
-Azure Service Fabric: A platform for distributed systems that can run in many environments, including Azure or on-premises, offering a custom orchestration platform 25.
-Azure Kubernetes Fleet Manager: Helps manage Kubernetes clusters at scale, providing seamless management capabilities 2.
-Azure Kubernetes Service Edge Essentials: An on-premises Kubernetes implementation of Azure Kubernetes Service (AKS) for automating the running of containerized applications at scale 2.
-These services cater to a wide range of containerization needs, from simple container hosting to complex orchestration and management, offering various levels of control, customization, and management capabilities.
+# Power bi files
+pbi.properties       <- paste0(rtdir,pbidir,"pl_app_05_properties.csv")
+pbi.households       <- paste0(rtdir,pbidir,"pl_app_05_households.csv")
+pbi.offers           <- paste0(rtdir,pbidir,"pl_app_05_offers.csv")
+pbi.matches          <- paste0(rtdir,pbidir,"pl_app_05_matches.csv")
+#pbi.exclusions       <- paste0(rtdir,pbidir,"pl_app_05_exclusions.csv")
+pbi.extracts         <- paste0(rtdir,pbidir,"pl_app_05_extracts.csv")
+pbi.zones            <- paste0(rtdir,pbidir,"pl_app_05_zones.csv")
 
 
-The resource needs for Azure's container services, particularly focusing on Azure Container Instances (ACI), are outlined below based on the provided sources. These details are crucial for planning and managing deployments within Azure's ecosystem.
+# Cost function parameters
+cost.option.default        <- "Beds;Distance;Dmods;Offers;Alerts;Hpriority"
+cost.weight.beds           <- 100.0        # 1 bed difference gives cost += 100
 
-General Resource Limits for ACI
-Max CPU: 4 cores
-Max Memory (GB): 16 GB
-Storage (GB): 50 GB
-Availability Zone support: Yes
-These limits apply to general purpose (standard core SKU) containers in general deployments and Azure virtual network deployments for both Linux and Windows containers 1.
+cost.weight.ldistkm        <- 100.0        # 10km equivalent to 1 bed difference
+cost.weight.ldistkm.hbeds  <- 0.0          # Small correction to distance to give people-distance
+cost.weight.ldistkm.pz.a   <- 1.0          # If in preferred zone: 
+cost.weight.ldistkm.pz.b   <- 0.1          # ldistkm -> a + b* ldistkm
 
-Specific Resource Limits for Different Scenarios
-Linux Container Groups:
-Max CPU: 4 cores
-Max Memory: 16 GB
-VNET Max CPU: 4 cores
-VNET Max Memory: 16 GB
-Storage: 50 GB
-Windows Server 2019 LTSC:
-Max CPU: 4 cores
-Max Memory: 16 GB
-Storage: 20 GB
-Availability Zone support: Yes
-Windows Server 2022 LTSC:
-Max CPU: 4 cores
-Max Memory: 16 GB
-Storage: 20 GB
-Availability Zone support: Yes
-Confidential Container Resources (Preview):
-Max CPU: 4 cores
-Max Memory: 16 GB
-VNET Max CPU: 4 cores
-VNET Max Memory: 16 GB
-Storage: 50 GB
-GPU Container Resources (Preview):
-V100 GPU SKUs:
-1 GPU: Max CPU 6 cores, Max Memory 112 GB, Storage 50 GB
-2 GPUs: Max CPU 12 cores, Max Memory 224 GB, Storage 50 GB
-4 GPUs: Max CPU 24 cores, Max Memory 448 GB, Storage 50 GB
-Spot Container Resources (Preview):
-Max CPU: 4 cores
-Max Memory: 16 GB
-Storage: 50 GB
-Unchangeable (Hard) Limits
-Number of containers per container group: 60
-Number of volumes per container group: 20
-Ports per IP: 5
-Container instance log size - running instance: 4 MB
-Container instance log size - stopped instance: 16 KB or 1,000 lines
-Changeable Limits (Eligible for Quota Increases)
-Standard SKU container groups per region per subscription: 100
-Standard SKU cores (CPUs) per region per subscription: 100
-Standard SKU cores (CPUs) for V100 GPU per region per subscription: 0
-Container group creates per hour: 300
-Container group creates per 5 minutes: 100
-Container group deletes per hour: 300
-Container group deletes per 5 minutes: 100
-These limits are subject to change and can be increased by submitting an Azure support request. However, not all limit increase requests are guaranteed to be approved 1.
+cost.weight.dmod          <- 100           # DMOD difference of 1 gives cost += 100
+cost.weight.halert        <- 100           # Halert of 1 gives cost += 100
+cost.weight.hpriority     <- 2.0           # Hpriority=5 gives cost += 50
+cost.weight.palert        <- 100           # Palert of 1 gives cost += 100
 
+zonepref.correction       <- TRUE
 
-ALTER TABLE NOTEPAD_F ADD COLUMN NLP_ICF_DIFFICULTY VARCHAR;
-ALTER TABLE NOTEPAD_F ALTER COLUMN NLP_ICF_DIFFICULTY DROP NOT NULL;
-INSERT INTO NOTEPAD_F (
-    NLP_ICF_DIFFICULTY
-) SELECT py_spacy_id(NOTEPAD_TXT) AS NLP_ICF_DIFFICULTY FROM NOTEPAD_F
+cost.delta.latlon.imputation <- 50   # Cost increase if lat/lons imputed
 
-How do I avoid running the function more than once?
+# Offer status codes ie status of offer at time of extract
+# AOF=Offer accepted; DOF=Offer declined; OFF=Offer made; 
+# WOF=Offer withdrawn,NA - No offer found
+cost.lookup.offers <- data.frame(ostcode       = c("AOF","DOF","OFF","WOF","N/A"),
+                                cost.multiplier = c(1.0,10.0,1.0,10.0,1.0),
+                                cost.delta      = c(0.0,0.0,0.0,0.0,0.0))
 
-And keeping a single column?
+cost.cutoff1   <- 100
+cost.cutoff2   <- 400
+cost.cutoff3   <- 10000
 
+offpri.cutoff1 <- 15
+offpri.cutoff2 <- 20
+offpri.cutoff3 <- 25
 
-To avoid running the py_spacy_id function more than once on your NOTEPAD_F table in Snowflake, you can use a conditional update approach. This method checks if the NLP_ICF_DIFFICULTY column is already populated before applying the function. Here's how you can modify your script:
+match.option.default <- "Optimal"
 
-UPDATE NOTEPAD_F
-SET NLP_ICF_DIFFICULTY = py_spacy_id(NOTEPAD_TXT)
-WHERE NLP_ICF_DIFFICULTY IS NULL;
+recommend.str1 <- "Yes"
+recommend.str2 <- "Maybe"
+recommend.str3 <- "No"
+recommend.str4 <- "Bad"
+recommend.rgb1 <- "#2DC937" 
+recommend.rgb2 <- "#E7B416"
+recommend.rgb3 <- "#F20C0C"
+recommend.rgb4 <- "#7300E6"
 
-This script updates the NLP_ICF_DIFFICULTY column only for rows where NLP_ICF_DIFFICULTY is NULL, ensuring that the py_spacy_id function is not called unnecessarily on rows that already have a value in the NLP_ICF_DIFFICULTY column. This approach is efficient and avoids reprocessing data that has already been processed, thus saving computational resources and time.
+hsource.const.bit.str 			        <- "BIT Applications"
+hsource.const.msd.str				        <- "MSD Waitlist"
+hsource.const.oth.str				        <- "Other"
+hsource.const.msd.sample.frac       <- 0.7
+hsource.const.msd.sample.opt        <- "Top"
 
+# Matt's lookup table to convert BIT reasons to priorities
+# CODE	Priority
+matts.lookup <- c("BRD" = 1,
+									"BNR" =	2,
+									"BNM" =	2,
+									"BOR" =	2,
+									"BUS" =	2,
+									"HLP" =	3,
+									"BDT" =	3,
+									"BSB" =	4,
+									"BOC" =	4,
+									"UTL" =	4,
+									"BUN" =	5,
+									"BUP" =	5,
+									"PUH" =	5,
+									"BUF" =	5,
+									"PRU" =	5,
+									"BUH" =	5,
+									"BHF" =	5,
+									"BHP" =	5,
+									"CTR" =	5,
+									"BEB" =	5,
+									"IAR" =	5,
+									"BDM" =	5)
 
-Using GPUs in Azure Machine Learning offers several advantages:
+mstat.const.underoffer     <- 'Under offer'
+mstat.const.matched        <- 'Matched'
+#mstat.const.unmatched      <- 'Unmatched'
+mstat.const.nolatlonzone   <- 'No lat/lon/zone'
+mstat.const.missing        <- 'Missing values'
+mstat.const.duplicate.id   <- 'Duplicate id'
+mstat.const.sampled.out    <- 'Sampled out'
+mstat.const.excluded       <- 'Excluded'
 
-Speed and Efficiency: GPUs can significantly accelerate machine learning (ML) workloads, making them faster and more efficient. This is particularly important with the increasing volume of data and the need for quicker processing times. Azure Machine Learning integrates with NVIDIA's RAPIDS, providing up to 20x speedup for traditional machine learning pipelines, and ONNX Runtime with NVIDIA TensorRT for deep learning inferencing 1.
-Scalability: GPUs allow for scalable computing, enabling the handling of large datasets and complex models. This is crucial for data scientists and developers working on large-scale projects. Azure Machine Learning supports distributed training across multiple nodes, which can be configured to use GPUs, further enhancing scalability 3.
-Flexibility: The integration of NVIDIA's technologies in Azure Machine Learning offers flexibility to developers and data scientists. They can choose from a variety of GPU options based on their specific needs, whether it's for training compute-intensive models or for distributed training across multiple nodes 3.
-Cost-Effectiveness: By leveraging GPU acceleration, Azure Machine Learning can help reduce the computational resources required for ML tasks, making it a more cost-effective solution for organizations. This is particularly beneficial for those working with large datasets or complex models that would otherwise be resource-intensive 3.
-Advanced Features: Azure Machine Learning's integration with NVIDIA's technologies also provides access to advanced features such as NVIDIA's multi-instance GPU (MIG) technology, which allows for partitioning each GPU into multiple instances, offering flexibility and scalability for diverse AI workloads 4.
-In summary, using GPUs in Azure Machine Learning offers speed, efficiency, scalability, flexibility, cost-effectiveness, and access to advanced features, making it an attractive option for data scientists and developers working on machine learning projects.
+psource.const.void.str 		 <- "Void"
+psource.const.pipe.str		 <- "Pipeline"
+psource.const.oth.str			 <- "Other"
 
-For NLP tasks using the spaCy library, utilizing a GPU can significantly benefit performance, especially when working with transformer-based models. The speed comparison provided in the sources shows a substantial increase in words per second (WPS) when using a GPU compared to a CPU. For instance, the en_core_web_lg pipeline processes 10,014 words per second on a CPU and 14,954 words per second on a GPU. This indicates that GPU acceleration can lead to a nearly 4x speedup for this specific pipeline 1.
-
-The discussion on GitHub further supports the idea that GPU acceleration can provide noticeable speed-ups during both training and inference tasks. This is particularly true for transformer models, where the difference in performance between CPU and GPU is more pronounced. For inference tasks, even though the speed-up might not be as significant as during training, it's still beneficial to use a GPU if available 3. https://github.com/explosion/spaCy/discussions/9932
-
-To utilize a GPU with spaCy, you can use the require_gpu() or prefer_gpu() functions from the thinc.api module. The require_gpu() function will raise an error if no GPU is available, while prefer_gpu() will not. This allows you to easily switch between CPU and GPU usage based on availability. Here's an example of how to set up spaCy to use a GPU:
-
-from thinc.api import require_gpu # OR prefer_gpu, which will not error if no CUDA
-from thinc.backends import use_pytorch_for_gpu_memory # If you are working with transformer models
-
-use_pytorch_for_gpu_memory()
-require_gpu()
-nlp = spacy.load(...)
-
-This setup ensures that spaCy will use the GPU for processing, taking advantage of its parallel processing capabilities to speed up NLP tasks 3.
-
-In summary, for NLP tasks using spaCy, especially those involving transformer models, leveraging a GPU can significantly improve performance. This is due to the parallel processing capabilities of GPUs, which are well-suited for the matrix operations common in NLP tasks. Whether you're training models or performing inference, using a GPU can provide a substantial speed-up compared to CPU-only processing.
+# Property window
+pwindow.const.dv.min  <- 0
+pwindow.const.dv.max  <- 365
+pwindow.const.d2d.min <- 10
+pwindow.const.d2d.max <- 60
 
 
-Traceback (most recent call last):   File "_udf_code.py", line 44, in <module>   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/__init__.py", line 51, in load     return util.load_model(   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/util.py", line 467, in load_model     return load_model_from_path(Path(name), **kwargs)  # type: ignore[arg-type]   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/util.py", line 547, in load_model_from_path     return nlp.from_disk(model_path, exclude=exclude, overrides=overrides)   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/language.py", line 2184, in from_disk     util.from_disk(path, deserializers, exclude)  # type: ignore[arg-type]   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/util.py", line 1372, in from_disk     reader(path / key)   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/language.py", line 2160, in deserialize_vocab     self.vocab.from_disk(path, exclude=exclude)   File "spacy/vocab.pyx", line 513, in spacy.vocab.Vocab.from_disk   File "spacy/vectors.pyx", line 718, in spacy.vectors.Vectors.from_disk   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/spacy/util.py", line 1372, in from_disk     reader(path / key)   File "spacy/vectors.pyx", line 703, in spacy.vectors.Vectors.from_disk.load_vectors   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/numpy/lib/npyio.py", line 432, in load     return format.read_array(fid, allow_pickle=allow_pickle,   File "/usr/lib/python_udf/0f162a58353de6856bf5790bfea6e5965b0038c946e100ebc6cfd0f2d3df47a9/lib/python3.8/site-packages/numpy/lib/format.py", line 831, in read_array     array.shape = shape ValueError: cannot reshape array of size 34619360 into shape (514157,300) in function APPLY_ICF_DIFFICULTY_SPANCAT with handler process
 
-The error you're encountering, ValueError: cannot reshape array of size 34619360 into shape (514157,300), typically occurs when there's a mismatch between the expected shape of an array and the actual size of the data being loaded. This can happen for various reasons, such as incorrect model loading, issues with the model file itself, or problems with the environment in which the code is running.
-
-Given the context of your error and the information from the sources, here are some steps and considerations to troubleshoot and potentially resolve the issue:
-
-Verify Model File Integrity: Ensure that the model file you're trying to load is not corrupted and is the correct version for the version of spaCy you're using. If you're unsure, try re-downloading the model.
-Check for Multiple Loads: If your code attempts to load the model multiple times (e.g., in a loop or due to multiple threads), ensure that the model is loaded only once and reused across the application. This can prevent issues related to concurrent access or repeated loading that might corrupt the model's state or lead to unexpected behavior 2.
-Environment Consistency: Ensure that the environment in which you're running your code (e.g., a specific server or cloud environment) is consistent with the environment in which the model was trained or tested. Differences in Python versions, library versions, or system configurations can lead to compatibility issues.
-Review Model Loading Code: Double-check the code used to load the model. Ensure that it's correctly specifying the model name and any necessary parameters. If you're using a custom model or have modified the model in any way, verify that these modifications are compatible with the version of spaCy you're using.
-Update spaCy and Dependencies: Ensure that you're using the latest version of spaCy and that all dependencies are up to date. Compatibility issues between different versions of libraries can lead to unexpected errors.
-Consult spaCy Documentation and Community: If the issue persists, consult the spaCy documentation and community forums for any known issues or solutions related to loading models. The spaCy GitHub issues page can be a valuable resource for finding similar problems and their solutions 24.
-If none of these steps resolve the issue, consider providing more details about your environment, the exact code used to load the model, and any modifications made to the model or its environment. This information can help in diagnosing the problem more accurately.
-
-
-https://www.linkedin.com/pulse/azure-devops-future-after-github-acquisition-microsoft-antonio-alvino/
