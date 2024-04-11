@@ -107,3 +107,5 @@ Performance Requirements: Evaluate how quickly we need to access and process dat
 Cost: Understand the pricing model and budget implications.
 Scalability: Ensure the solution can grow with your data.
 Security and Compliance: Assess the solution's security features and compliance with regulations.
+
+https://learn.microsoft.com/en-us/azure/architecture/guide/technology-choices/data-store-considerations
