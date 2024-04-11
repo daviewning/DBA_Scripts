@@ -32,6 +32,8 @@ Snowpark Documentation and Community: Utilize Snowpark's documentation and commu
 Conclusion
 While running NLP models in Snowflake using Python presents unique challenges, especially in managing environments and dependencies, these can be mitigated through the use of Conda environments, careful library management, and thorough testing. Additionally, leveraging Snowpark's documentation and community resources can provide valuable insights and solutions to common issues.
 
+https://docs.snowflake.com/en/developer-guide/snowpark/python/python-snowpark-training-ml
+
 How to manage the environment for data scientist  study in Azure
 
 Managing the environment for data science studies in Azure involves leveraging Azure Machine Learning environments and the Data Science Virtual Machine (DSVM) to create a conducive and efficient workspace. Here's how you can manage your environment effectively:
