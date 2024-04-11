@@ -109,3 +109,15 @@ Scalability: Ensure the solution can grow with your data.
 Security and Compliance: Assess the solution's security features and compliance with regulations.
 
 https://learn.microsoft.com/en-us/azure/architecture/guide/technology-choices/data-store-considerations
+
+
+
+To import external Python code into Snowflake, especially for use in Python worksheets, you can follow these steps based on the provided sources:
+
+Create a Snowflake Stage: First, you need to create a stage in Snowflake that points to an external storage location where your Python code or packages are stored. This could be an Azure Blob Storage, Amazon S3, or Google Cloud Storage (GCS) bucket. The stage acts as a temporary storage area for loading data into Snowflake 1.
+Upload Your Python Code or Packages: Upload your Python code or packages to the external storage location referenced by the Snowflake stage. Ensure that the code or packages follow the guidelines defined in Snowflake's General Limitations for Python UDFs. If your package includes native code, you must use the Anaconda Snowflake channel 1.
+Add the Python File from a Stage to a Worksheet: In your Snowflake Python worksheet, you can add the Python file or package from the stage to your worksheet. To do this, you need to enter the path to the package in the stage. If the stage is in the same database and schema as your worksheet, you can reference it using an unqualified name, like @YourStage/path/to/example_package.py. If the stage is in a different database or schema, you need to fully qualify the stage name, for example, @Database.Schema.Stage/path/to/other_package.py 2.
+Import the Package: After referencing the package in your worksheet, select "Import" to add your package to the list of installed packages for your Python worksheet. This makes the package available for use within your worksheet 2.
+Use the Imported Package: Once the package is imported, you can use import statements in your Python code to utilize the package. For example, if you've imported a package named scikit-learn, you would add import scikit-learn at the beginning of your code 2.
+Running Your Code: After importing the necessary packages and writing your Python code, you can execute it within the Snowflake Python worksheet. Any error messages or the return value from your code will appear in the "Results" section of the worksheet. To view log messages, you can select "Output" 2.
+
