@@ -21,6 +21,8 @@ python -m pip install 'snowflake-ml-python[lightgbm]'
 
 This method allows you to add any additional libraries you need for your NLP model without needing to go through Snowflake support
 
+https://docs.snowflake.com/en/developer-guide/snowpark-ml/index
+
 Debugging Python Code
 Debugging Python code in Snowflake can be challenging due to the lack of direct access to the environment and the limitations in error reporting. However, you can use the following strategies to make the process easier:
 
