@@ -121,3 +121,4 @@ Import the Package: After referencing the package in your worksheet, select "Imp
 Use the Imported Package: Once the package is imported, you can use import statements in your Python code to utilize the package. For example, if you've imported a package named scikit-learn, you would add import scikit-learn at the beginning of your code 2.
 Running Your Code: After importing the necessary packages and writing your Python code, you can execute it within the Snowflake Python worksheet. Any error messages or the return value from your code will appear in the "Results" section of the worksheet. To view log messages, you can select "Output" 2.
 
+https://docs.snowflake.com/en/user-guide/intro-key-concepts
