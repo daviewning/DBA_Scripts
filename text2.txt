@@ -58,6 +58,8 @@ Implement and monitor scalable machine learning solutions: Manage, deploy, and m
 Develop hands-on experience: Work on real projects to deepen your understanding and build your confidence in applying your knowledge to real-world scenarios. This could involve tasks like data exploration, data cleaning, feature engineering, model development, and evaluation 4.
 By leveraging Azure Machine Learning environments and the DSVM, you can create a robust and efficient environment for your data science studies in Azure. This setup will enable you to manage your software dependencies effectively, enhance productivity, and ensure compliance with enterprise IT policies.
 
+https://learn.microsoft.com/en-us/azure/machine-learning/data-science-virtual-machine/dsvm-enterprise-overview?view=azureml-api-2
+
 Data Storage solution in Azure for Data Scietisnt activities
 
 For data scientists working with Azure, choosing the right data storage solution is crucial for managing datasets efficiently and cost-effectively. Azure offers a variety of storage services, each designed for specific needs, from structured data to massive unstructured datasets. Here's a breakdown of the key storage solutions suitable for data scientist activities:
