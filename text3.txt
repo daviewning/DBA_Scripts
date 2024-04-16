@@ -68,3 +68,15 @@ Document and Train for Network Integration:
 Document network configurations and integration.
 Provide training on secure access within corporate network.
 By following these steps, the Azure environment can meet the team's needs efficiently, securely, and in compliance with organizational standards.
+
+
+Solution/Cloud Architect: Responsible for designing and architecting the Azure environment
+
+Cloud Engineer: Including setting up virtual networks, configuring Azure services, and ensuring security and compliance, Assists in setting up CI/CD pipelines, integrating Azure Container Registry and Kubernetes Service, and automating deployment processes for containerized applications.
+
+Network Engineer: Responsible setting up the on-premises networks ready for DS Azure VNet peering.
+
+Data Scientists (6): These individuals will be the primary users of the Azure environment. They will utilize services like Azure Machine Learning, Databricks, and Synapse Analytics for data analysis, modeling, and deployment.
+
+Data Engineer (1): Responsible for setting up and managing data engineering services like Azure Data Factory, Stream Analytics, and Data Lake Storage. They would also assist in setting up connections to on-premises data sources.
+
