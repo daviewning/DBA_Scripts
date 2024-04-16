@@ -26,3 +26,50 @@ To ensure that Data Scientist team’s client can only access the Azure services
 5. Trusted Services Trusted Services: Ensure that the services we integrate with ACR and AKS are marked as trusted. This allows them to bypass the network rules and securely access the registry or cluster. 
 6. Documentation and Training Documentation: Document the network configurations, RBAC roles, and integration steps for Data Scientist team. This includes how to access the ACR and AKS securely from the App Service within the corporate network. Training: Provide training to DS team on how to use the Azure services securely and efficiently within the corporate network. By following these steps, we can ensure that your Azure environment is securely integrated with your corporate network, allowing your team to access Azure services like ACR and AKS while maintaining network security and compliance.
 Reference: https://learn.microsoft.com/en-us/azure/container-registry/allow-access-trusted-services
+
+
+
+
+Azure Environment Setup:
+
+Create an Azure Subscription and Resource Group to organize resources efficiently.
+Set up a Virtual Network (VNet) and configure subnets for different resources.
+Create Virtual Machines (VMs) for data scientists and the data engineer with suitable resources.
+Data Science and Data Engineer Services:
+
+Utilize Azure Machine Learning, Azure Databricks, and Azure Synapse Analytics for data science tasks.
+Employ Azure Data Factory, Azure Stream Analytics, and Azure Data Lake Storage for data engineering tasks.
+Network Connectivity:
+
+Ensure VMs have internet access for downloading Python libraries and additional software.
+Connect to an on-premises Oracle Database via Express VPN and configure Network Security Group (NSG) rules.
+Security and Compliance:
+
+Use Azure Active Directory (AAD) for identity and access management.
+Implement Azure Policy and Azure Security Center to enforce organizational standards and monitor resources.
+Store and manage secrets securely using Azure Key Vault.
+Monitoring and Management:
+
+Utilize Azure Monitor and Azure Log Analytics to collect and analyze telemetry and log data.
+Documentation and Training:
+
+Maintain comprehensive documentation for setup, configuration, and usage.
+Provide training to the team on effectively using Azure services.
+Integration with Azure Container Services:
+
+Set up Azure Container Registry (ACR) to store and manage container images.
+Deploy and manage Kubernetes clusters using Azure Kubernetes Service (AKS).
+Integrate ACR and AKS with other Azure data science and data engineering services.
+Network Access Configuration for Azure Services:
+
+Restrict access to Azure Container Registry (ACR) and Azure Kubernetes Service (AKS) to the corporate network.
+Integrate services with Azure App Service to ensure secure connectivity.
+Access Control and Trusted Services:
+
+Use Role-Based Access Control (RBAC) to manage access to resources.
+Configure trusted services to securely access ACR and AKS.
+Documentation and Training for Network Integration:
+
+Document network configurations and integration steps.
+Provide training on securely accessing Azure services within the corporate network.
+By following these steps, the Azure environment can be tailored to the team's needs, ensuring efficiency, security, and compliance.
