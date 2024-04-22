@@ -80,3 +80,33 @@ Data Scientists (6): These individuals will be the primary users of the Azure en
 
 Data Engineer (1): Responsible for setting up and managing data engineering services like Azure Data Factory, Stream Analytics, and Data Lake Storage. They would also assist in setting up connections to on-premises data sources.
 
+
+•	To create a tailored Azure environment for a team of data scientists and a data engineer
+•	Setup Azure Environment
+•	Create Azure Subscription for team members.
+•	Create Resource Group for team members.
+•	Establish Virtual Network and VMs for team members.
+•	Utilize Data Science and Data Engineer Services
+•	Deploy Azure Machine Learning
+•	Deploy Databricks
+•	Deploy Data Factory.
+•	Ensure Network Connectivity and Security: 
+•	Allow internet access for Python, and R libraries.
+•	Connect to on-premises Oracle Database via Express VPN
+•	Implement security measures using Azure Active Directory and Azure Policy.
+•	Monitor and Manage Resources: Use Azure Monitor and Log Analytics for monitoring.
+•	Integrate Azure Container Services
+•	Set up Azure Container Registry (ACR), Azure Kubernetes Service (AKS) 
+•	Integrate with data science and data engineering services.
+•	Configure Network Access for Azure Services
+•	Restrict access to ACR and AKS to corporate network.
+•	Integrate with Azure App Services for secure connectivity.
+•	Control Access and Ensure Trust: 
+•	Use Role-Based Access Control (RBAC)
+•	Configure trusted services for secure access.
+•	Document and Train for Network Integration
+•	Maintain comprehensive documentation.
+•	Document network configurations and integration.
+•	Train team on Azure services usage
+•	Provide training on secure access within corporate network.
+
