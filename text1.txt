@@ -2001,3 +2001,4 @@ Enter file contents here
 
 
 https://learn.microsoft.com/en-us/training/paths/explore-computer-vision-microsoft-azure/
+https://www.twilio.com/en-us/blog/ultimate-guide-openai-gpt-3-language-model
