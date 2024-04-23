@@ -1997,3 +1997,7 @@ my.remove.pbi.timeslice.from.1.table.fn <- function(exdt,path){
 }
 ################################################################################
 Enter file contents here
+
+
+
+https://learn.microsoft.com/en-us/training/paths/explore-computer-vision-microsoft-azure/
