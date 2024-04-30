@@ -1,1 +1,32 @@
+To connect a Shiny app to Snowflake, you can follow these steps, which involve setting up an ODBC connection and then using the DBI package to establish the connection within your Shiny app. Here's a step-by-step guide based on the information provided:
 
+Install and Load Required Packages: Ensure you have the necessary R packages installed and loaded. You'll need DBI, odbc, and optionally tidyverse and dbplyr for data manipulation.
+
+install.packages(c("DBI", "odbc", "tidyverse", "dbplyr"))
+library(DBI)
+library(odbc)
+library(tidyverse)
+library(dbplyr)
+
+Set Up ODBC Connection: Before you can connect to Snowflake from R, you need to set up an ODBC connection. This process varies depending on your operating system, so refer to the Snowflake documentation for detailed instructions.
+Establish Connection in Shiny App: Use the DBI::dbConnect function to establish a connection to Snowflake within your Shiny app. Replace the placeholders with your actual Snowflake server details, database name, schema, user ID, password, and warehouse.
+
+db_connection <- DBI::dbConnect(odbc::odbc(),
+                         Driver="Snowflake",
+                         Server="MY_SNOWFLAKE_SERVER.snowflakecomputing.com",
+                         Database="EXAMPLE_DB",
+                         SCHEMA="EXAMPLE_SCHEMA",
+                         UID="EXAMPLE_USER",
+                         PWD="MY_SECRET_PASSWORD",
+                         WAREHOUSE="EXAMPLE_WH"
+)
+
+Query Data: Once connected, you can query data from Snowflake and use it within your Shiny app. For example, to read data from a table named "TABLE_A":
+
+a <- tbl(db_connection, "TABLE_A")
+a %>%
+  collect()
+
+Deploying Shiny App: If you're deploying your Shiny app on a platform like shinyapps.io, ensure that your database credentials are securely managed. Avoid hardcoding sensitive information directly in your app's code. Instead, consider using environment variables or secure credential storage solutions.
+
+https://forum.posit.co/t/shiny-app-not-connecting-to-snowflake-through-sso/143500
