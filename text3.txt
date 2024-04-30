@@ -30,3 +30,21 @@ a %>%
 Deploying Shiny App: If you're deploying your Shiny app on a platform like shinyapps.io, ensure that your database credentials are securely managed. Avoid hardcoding sensitive information directly in your app's code. Instead, consider using environment variables or secure credential storage solutions.
 
 https://forum.posit.co/t/shiny-app-not-connecting-to-snowflake-through-sso/143500
+
+
+@startuml
+
+skinparam componentStyle uml2
+
+package "AWS" {
+    [R Shiny App Container] as shiny
+    [AWS Lambda Function] as lambda
+    [S3 Bucket] as s3
+    [Snowflake Environment] as snowflake
+
+    shiny --> s3 : Access data
+    lambda --> snowflake : Extract data
+    lambda --> s3 : Save data
+}
+
+@enduml
