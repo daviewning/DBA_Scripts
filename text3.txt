@@ -60,3 +60,34 @@ package "External Organizations" {
 @enduml
 
 
+
+
+
+To connect an R Shiny app to Snowflake through Single Sign-On (SSO), you can use the RJDBC package, which allows R to interact with databases using JDBC drivers. This method is particularly useful when your organization uses SSO for authentication, such as with Okta. Here's how you can set it up:
+
+Install and Load Required Packages:
+Install the RJDBC package if you haven't already.
+Load the RJDBC library.
+
+install.packages("RJDBC")
+library(RJDBC)
+
+Download Snowflake JDBC Driver:
+Download the Snowflake JDBC driver from the Snowflake website. Choose the version that matches your Snowflake account version.
+Save the JDBC driver JAR file to a known location on your system.
+Specify the JDBC Driver:
+Use the JDBC function from the RJDBC package to specify the Snowflake JDBC driver. Replace the classPath with the path to your downloaded Snowflake JDBC driver.
+
+jdbcDriver <- JDBC(driverClass="net.snowflake.client.jdbc.SnowflakeDriver", 
+                   classPath="/path/to/snowflake-jdbc-3.6.6.jar")
+
+Create a Connection to Snowflake:
+Use the dbConnect function to establish a connection to Snowflake. You need to specify the JDBC connection string, including the SSO path and your corporate username with the domain. Replace placeholders with your actual Snowflake account details and SSO information.
+
+con <- dbConnect(jdbcDriver, 
+                 "jdbc:snowflake://your_snowflake_account.snowflakecomputing.com/?authenticator=https://your_domain_name.okta.com/", 
+                 'your_username@your_domain.com', 
+                 'your_password')
+Query Data:
+Once connected, you can query data from Snowflake and use it within your Shiny app.
+
