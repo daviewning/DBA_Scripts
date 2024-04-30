@@ -53,9 +53,10 @@ package "External Organizations" {
     [MPI]
 
     LINZ --> snowflake : Ingest data
-    Local Region Councils --> snowflake : Ingest data
+    Local_Region_Councils --> snowflake : Ingest data
     MPI --> snowflake : Ingest data
 }
 
 @enduml
+
 
