@@ -47,4 +47,15 @@ package "AWS" {
     lambda --> s3 : Save data
 }
 
+package "External Organizations" {
+    [LINZ]
+    [Local Region Councils]
+    [MPI]
+
+    LINZ --> snowflake : Ingest data
+    Local Region Councils --> snowflake : Ingest data
+    MPI --> snowflake : Ingest data
+}
+
 @enduml
+
